@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
@@ -37,6 +38,7 @@ class GridCleanEnv:
         reward_invalid: int = -5,
         reward_finish: int = 50,
     ) -> None:
+        # Load a small default room if no custom map is provided.
         if grid_map is None:
             grid_map = [
                 "#######",
@@ -49,31 +51,37 @@ class GridCleanEnv:
         self.raw_map = grid_map
         self.max_steps = max_steps
 
+        # Store the reward configuration.
         self.reward_clean = reward_clean
         self.reward_move = reward_move
         self.reward_revisit = reward_revisit
         self.reward_invalid = reward_invalid
         self.reward_finish = reward_finish
 
+        # Build the internal grid representation.
         self.grid: List[List[str]] = [list(row) for row in grid_map]
         self.rows = len(self.grid)
         self.cols = len(self.grid[0])
 
+        # Find and clear the start tile in the static map.
         self.start_pos = self._find_start_pos()
         start_row, start_col = self.start_pos
         self.grid[start_row][start_col] = "."
 
+        # Index dirty tiles so their cleaned status can be tracked by bitmask.
         self.dirty_positions = self._find_dirty_positions()
         self.dirty_index_map = {
             pos: idx for idx, pos in enumerate(self.dirty_positions)
         }
         self.total_dirty_tiles = len(self.dirty_positions)
 
+        # Initialize the dynamic episode state.
         self.robot_pos: Tuple[int, int] = self.start_pos
         self.cleaned_mask: int = 0
         self.steps_taken: int = 0
 
     def _find_start_pos(self) -> Tuple[int, int]:
+        # Collect all start tiles and validate that there is exactly one.
         start_positions = []
         for r in range(self.rows):
             for c in range(self.cols):
@@ -86,6 +94,7 @@ class GridCleanEnv:
         return start_positions[0]
 
     def _find_dirty_positions(self) -> List[Tuple[int, int]]:
+        # Record every dirty tile in the map.
         dirty_positions = []
         for r in range(self.rows):
             for c in range(self.cols):
@@ -94,9 +103,11 @@ class GridCleanEnv:
         return dirty_positions
 
     def _is_wall(self, row: int, col: int) -> bool:
+        # Check whether the target tile is blocked.
         return self.grid[row][col] == "#"
 
     def _is_dirty(self, row: int, col: int) -> bool:
+        # Return True only if the tile exists and has not been cleaned yet.
         pos = (row, col)
         if pos not in self.dirty_index_map:
             return False
@@ -105,33 +116,40 @@ class GridCleanEnv:
         return ((self.cleaned_mask >> idx) & 1) == 0
 
     def _clean_tile(self, row: int, col: int) -> None:
+        # Mark the tile as cleaned in the bitmask.
         pos = (row, col)
         if pos in self.dirty_index_map:
             idx = self.dirty_index_map[pos]
             self.cleaned_mask |= (1 << idx)
 
     def _count_cleaned_tiles(self) -> int:
+        # Count how many dirty tiles have been cleaned so far.
         return self.cleaned_mask.bit_count()
 
     def _all_cleaned(self) -> bool:
+        # Check whether the episode goal has been reached.
         return self._count_cleaned_tiles() == self.total_dirty_tiles
 
     def _get_state(self) -> Tuple[int, int, int]:
+        # Encode the current state as position plus cleaned bitmask.
         row, col = self.robot_pos
         return (row, col, self.cleaned_mask)
 
     def reset(self) -> Tuple[int, int, int]:
+        # Reset the robot position and cleaning progress for a new episode.
         self.robot_pos = self.start_pos
         self.cleaned_mask = 0
         self.steps_taken = 0
         return self._get_state()
 
     def step(self, action: int) -> Tuple[Tuple[int, int, int], int, bool, Dict[str, float]]:
+        # Reject invalid action ids early.
         if action not in self.ACTIONS:
             raise ValueError(f"Invalid action: {action}")
 
         self.steps_taken += 1
 
+        # Compute the candidate next position.
         current_row, current_col = self.robot_pos
         dr, dc = self.ACTIONS[action]
         next_row = current_row + dr
@@ -139,11 +157,13 @@ class GridCleanEnv:
 
         reward = 0
 
+        # Penalize invalid moves, otherwise update the robot state.
         if self._is_wall(next_row, next_col):
             reward += self.reward_invalid
         else:
             self.robot_pos = (next_row, next_col)
 
+            # Reward new cleaning, penalize revisits, or apply move cost.
             if self._is_dirty(next_row, next_col):
                 self._clean_tile(next_row, next_col)
                 reward += self.reward_clean
@@ -154,12 +174,14 @@ class GridCleanEnv:
                     reward += self.reward_move
 
         done = False
+        # End the episode when all tiles are cleaned or the step limit is reached.
         if self._all_cleaned():
             reward += self.reward_finish
             done = True
         elif self.steps_taken >= self.max_steps:
             done = True
 
+        # Return extra metrics for logging and evaluation.
         info = {
             "steps_taken": self.steps_taken,
             "cleaned_tiles": self._count_cleaned_tiles(),
@@ -174,12 +196,15 @@ class GridCleanEnv:
         return self._get_state(), reward, done, info
 
     def render(self) -> None:
+        # Copy the static map so the current episode state can be overlaid.
         display_grid = [row[:] for row in self.grid]
 
+        # Replace cleaned dirty tiles with normal floor tiles.
         for (r, c), idx in self.dirty_index_map.items():
             if ((self.cleaned_mask >> idx) & 1) == 1:
                 display_grid[r][c] = "."
 
+        # Draw the robot on top of the room.
         robot_r, robot_c = self.robot_pos
         display_grid[robot_r][robot_c] = "R"
 
@@ -192,5 +217,5 @@ class GridCleanEnv:
         )
 
     def sample_action(self) -> int:
-        import random
+        # Sample a random action from the environment action space.
         return random.choice(list(self.ACTIONS.keys()))

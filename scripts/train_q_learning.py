@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
+    # Add the project root so local modules can be imported when run as a script.
     sys.path.append(str(PROJECT_ROOT))
 
 from agents.q_learning_agent import QLearningAgent
@@ -16,6 +17,7 @@ from env.grid_clean_env import GridCleanEnv
 
 
 def ensure_output_dirs() -> None:
+    # Create output folders before saving plots or logs.
     (PROJECT_ROOT / "outputs" / "plots").mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "outputs" / "logs").mkdir(parents=True, exist_ok=True)
 
@@ -24,12 +26,14 @@ def run_training_episode(
     env: GridCleanEnv,
     agent: QLearningAgent,
 ) -> Dict[str, float]:
+    # Reset the environment and training metrics for one episode.
     state = env.reset()
     done = False
     total_reward = 0
     final_info: Dict[str, float] = {}
 
     while not done:
+        # Choose an action, step the environment, and update the Q-table.
         action = agent.select_action(state, training=True)
         next_state, reward, done, info = env.step(action)
 
@@ -45,6 +49,7 @@ def run_training_episode(
         total_reward += reward
         final_info = info
 
+    # Decay epsilon after the episode ends.
     agent.decay_epsilon()
 
     return {
@@ -63,6 +68,7 @@ def run_greedy_episode(
     agent: QLearningAgent,
     render: bool = True,
 ) -> Dict[str, float]:
+    # Run one evaluation episode with exploration disabled.
     state = env.reset()
     done = False
     total_reward = 0
@@ -74,6 +80,7 @@ def run_greedy_episode(
         env.render()
 
     while not done:
+        # Always choose the current best action from the learned policy.
         action = agent.get_policy_action(state)
         next_state, reward, done, info = env.step(action)
 
@@ -88,6 +95,7 @@ def run_greedy_episode(
             print(f"reward={reward}")
             env.render()
 
+    # Package the greedy episode result for easy inspection.
     result = {
         "total_reward": total_reward,
         "steps_taken": final_info["steps_taken"],
@@ -106,6 +114,7 @@ def run_greedy_episode(
 
 
 def moving_average(values: List[float], window_size: int) -> List[float]:
+    # Smooth a metric series with a simple trailing moving average.
     smoothed: List[float] = []
 
     for idx in range(len(values)):
@@ -122,13 +131,15 @@ def save_training_plots(
     success_rates: List[float],
     epsilons: List[float],
 ) -> None:
+    # Create output folders before saving figures.
     ensure_output_dirs()
 
+    # Smooth each metric so overall trends are easier to read.
     reward_ma = moving_average(rewards, window_size=50)
     cleaned_ma = moving_average(cleaned_ratios, window_size=50)
     success_ma = moving_average(success_rates, window_size=50)
 
-    # Reward plot
+    # Plot raw and smoothed training reward.
     plt.figure(figsize=(10, 5))
     plt.plot(rewards, label="episode reward")
     plt.plot(reward_ma, label="reward (moving average 50)")
@@ -140,7 +151,7 @@ def save_training_plots(
     plt.savefig(PROJECT_ROOT / "outputs" / "plots" / "training_reward.png")
     plt.close()
 
-    # Cleaned ratio plot
+    # Plot raw and smoothed cleaned ratio.
     plt.figure(figsize=(10, 5))
     plt.plot(cleaned_ratios, label="episode cleaned ratio")
     plt.plot(cleaned_ma, label="cleaned ratio (moving average 50)")
@@ -152,7 +163,7 @@ def save_training_plots(
     plt.savefig(PROJECT_ROOT / "outputs" / "plots" / "training_cleaned_ratio.png")
     plt.close()
 
-    # Success rate plot
+    # Plot raw and smoothed success trend.
     plt.figure(figsize=(10, 5))
     plt.plot(success_rates, label="episode success")
     plt.plot(success_ma, label="success rate (moving average 50)")
@@ -164,7 +175,7 @@ def save_training_plots(
     plt.savefig(PROJECT_ROOT / "outputs" / "plots" / "training_success.png")
     plt.close()
 
-    # Epsilon plot
+    # Plot epsilon decay across training.
     plt.figure(figsize=(10, 5))
     plt.plot(epsilons, label="epsilon")
     plt.xlabel("Episode")
@@ -181,6 +192,7 @@ def train_q_learning(
     seed: int = 42,
     print_every: int = 100,
 ) -> None:
+    # Build the environment and the Q-learning agent.
     env = GridCleanEnv()
     agent = QLearningAgent(
         action_space_size=len(env.ACTIONS),
@@ -192,6 +204,7 @@ def train_q_learning(
         seed=seed,
     )
 
+    # Store per-episode metrics for reporting and plotting.
     rewards: List[float] = []
     cleaned_ratios: List[float] = []
     success_rates: List[float] = []
@@ -205,6 +218,7 @@ def train_q_learning(
         success_rates.append(result["success"])
         epsilons.append(result["epsilon"])
 
+        # Print a rolling summary at a fixed interval.
         if episode % print_every == 0:
             recent_rewards = rewards[-print_every:]
             recent_cleaned = cleaned_ratios[-print_every:]
@@ -218,6 +232,7 @@ def train_q_learning(
                 f"epsilon={agent.epsilon:.4f}"
             )
 
+    # Save plots after training finishes.
     save_training_plots(
         rewards=rewards,
         cleaned_ratios=cleaned_ratios,
@@ -233,6 +248,7 @@ def train_q_learning(
     print(f"last 100 avg cleaned ratio: {mean(cleaned_ratios[-100:]):.2%}")
     print(f"last 100 success rate: {mean(success_rates[-100:]):.2%}")
 
+    # Render one final greedy episode to inspect the learned behavior.
     run_greedy_episode(env=env, agent=agent, render=True)
 
     print("\nSaved plots:")

@@ -7,6 +7,7 @@ from typing import Dict, List
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
+    # Add the project root so local modules can be imported when run as a script.
     sys.path.append(str(PROJECT_ROOT))
 
 from agents.random_agent import RandomAgent
@@ -18,6 +19,7 @@ def run_episode(
     agent: RandomAgent,
     render: bool = False,
 ) -> Dict[str, float]:
+    # Reset the environment and tracking values for one episode.
     state = env.reset()
     total_reward = 0
     done = False
@@ -29,6 +31,7 @@ def run_episode(
         env.render()
 
     while not done:
+        # Sample an action, apply it, and record the transition.
         action = agent.select_action(state)
         next_state, reward, done, info = env.step(action)
 
@@ -43,6 +46,7 @@ def run_episode(
             print(f"reward={reward}")
             env.render()
 
+    # Package the episode metrics for downstream averaging.
     result = {
         "total_reward": total_reward,
         "steps_taken": final_info["steps_taken"],
@@ -65,16 +69,19 @@ def evaluate_random_agent(
     seed: int = 42,
     render_first_episode: bool = True,
 ) -> None:
+    # Build the environment and the random baseline agent.
     env = GridCleanEnv()
     agent = RandomAgent(action_space_size=len(env.ACTIONS), seed=seed)
 
     episode_results = []
 
     for episode_idx in range(num_episodes):
+        # Render only the first episode to keep the output readable.
         render = render_first_episode and episode_idx == 0
         result = run_episode(env=env, agent=agent, render=render)
         episode_results.append(result)
 
+    # Compute average baseline metrics across all episodes.
     avg_reward = mean(result["total_reward"] for result in episode_results)
     avg_steps = mean(result["steps_taken"] for result in episode_results)
     avg_cleaned_tiles = mean(result["cleaned_tiles"] for result in episode_results)
