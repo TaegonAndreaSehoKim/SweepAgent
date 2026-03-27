@@ -163,3 +163,41 @@ Development notes are recorded in:
 ```bash
 docs/devlog/week1.md
 ```
+
+## Current Results
+
+### Default Map
+
+Random agent evaluation over 100 episodes:
+- Average reward: `-94.03`
+- Average steps: `64.58`
+- Average cleaned ratio: `91.00%`
+- Success rate: `79.00%`
+
+Learned greedy policy over 100 episodes:
+- Average reward: `76.00`
+- Average steps: `7.00`
+- Average cleaned ratio: `100.00%`
+- Success rate: `100.00%`
+
+Improvement over the random baseline:
+- Reward gain: `170.03`
+- Step reduction: `57.58`
+- Cleaned ratio gain: `9.00 percentage points`
+- Success rate gain: `21.00 percentage points`
+
+### Harder Map
+
+Random agent evaluation over 100 episodes:
+- Average reward: `-300.97`
+- Average steps: `119.86`
+- Average cleaned ratio: `49.25%`
+- Success rate: `2.00%`
+
+Learned greedy policy over 100 episodes:
+- Average reward: `76.00`
+- Average steps: `18.00`
+- Average cleaned ratio: `100.00%`
+- Success rate: `100.00%`
+
+These results show that the learned policy is not only better than the random baseline on the default map, but also remains highly effective on a more difficult room layout.
