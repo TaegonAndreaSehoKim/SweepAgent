@@ -140,12 +140,15 @@ python scripts/evaluate_agents.py
 - [x] Build grid cleaning environment
 - [x] Add random baseline agent
 - [x] Add baseline evaluation script
-- [ ] Implement Q-learning agent
-- [ ] Train and evaluate learned policy
-- [ ] Visualize reward and cleaning progress
-- [ ] Add step-by-step movement visualization
-- [ ] Compare random vs learned agent
-- [ ] Add harder maps and extended environment rules
+- [x] Implement Q-learning agent
+- [x] Train and evaluate learned policy
+- [x] Visualize reward and cleaning progress
+- [x] Add step-by-step movement visualization
+- [x] Compare random vs learned agent
+- [x] Add a harder map evaluation
+- [ ] Add more room layouts
+- [ ] Explore more difficulty settings
+- [ ] Test additional RL methods
 
 ## Future Extensions
 
@@ -201,3 +204,15 @@ Learned greedy policy over 100 episodes:
 - Success rate: `100.00%`
 
 These results show that the learned policy is not only better than the random baseline on the default map, but also remains highly effective on a more difficult room layout.
+
+## Visualization
+
+The project currently supports GIF-based policy playback for clearer step-by-step inspection of the agent's behavior.
+
+Generated outputs:
+- `outputs/gifs/learned_policy_harder.gif`
+- `outputs/gifs/comparison_harder.gif`
+
+The learned policy GIF shows a full greedy rollout after training.
+
+The comparison GIF shows the random policy and the learned policy side by side on the same map, making it easier to observe differences in efficiency, path quality, and overall task completion behavior.

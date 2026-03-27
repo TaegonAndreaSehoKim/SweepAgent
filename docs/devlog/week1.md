@@ -141,3 +141,84 @@ For the next stage, I plan to:
 - save learned trajectories as GIFs or animations
 - test more room layouts
 - prepare cleaner result summaries for the README
+
+## Day 2 - Q-Learning Training, Evaluation, and Visualization
+
+Today I implemented the first learning-based agent for SweepAgent using tabular Q-learning and confirmed that it significantly outperforms the random baseline.
+
+### What I completed
+- Implemented `QLearningAgent` in `agents/q_learning_agent.py`
+- Added epsilon-greedy exploration
+- Added Q-table update logic
+- Added a training script in `scripts/train_q_learning.py`
+- Saved training plots for:
+  - reward
+  - cleaned ratio
+  - success trend
+  - epsilon decay
+- Added shared experiment settings in `configs/default_config.py`
+- Added `scripts/compare_agents.py` to compare the random baseline and the learned greedy policy
+- Added a harder map preset for more meaningful evaluation
+- Added GIF rendering for a learned policy rollout
+- Added a side-by-side comparison GIF for the random and learned policies
+
+### Training result on the default map
+After training for 1000 episodes:
+- Final epsilon: `0.0500`
+- Learned Q-table states: `64`
+- Last 100 average reward: `75.02`
+- Last 100 average cleaned ratio: `100.00%`
+- Last 100 success rate: `100.00%`
+
+The learned greedy policy cleaned the full room in 7 steps with total reward `76`.
+
+### Comparison on the default map
+Random baseline over 100 episodes:
+- Average reward: `-94.03`
+- Average steps: `64.58`
+- Average cleaned ratio: `91.00%`
+- Success rate: `79.00%`
+
+Learned greedy policy over 100 episodes:
+- Average reward: `76.00`
+- Average steps: `7.00`
+- Average cleaned ratio: `100.00%`
+- Success rate: `100.00%`
+
+Improvement over the random baseline:
+- Reward gain: `170.03`
+- Step reduction: `57.58`
+- Cleaned ratio gain: `9.00 percentage points`
+- Success rate gain: `21.00 percentage points`
+
+### Comparison on the harder map
+Random baseline over 100 episodes:
+- Average reward: `-300.97`
+- Average steps: `119.86`
+- Average cleaned ratio: `49.25%`
+- Success rate: `2.00%`
+
+Learned greedy policy over 100 episodes:
+- Average reward: `76.00`
+- Average steps: `18.00`
+- Average cleaned ratio: `100.00%`
+- Success rate: `100.00%`
+
+### Visualization output
+The project now includes two GIF-based visual outputs:
+- `outputs/gifs/learned_policy_harder.gif`
+- `outputs/gifs/comparison_harder.gif`
+
+These visualizations make it much easier to inspect the learned behavior and compare it directly against the random baseline.
+
+### Takeaway
+The default map already showed that Q-learning learns a much more efficient cleaning strategy than a random walk.
+
+The harder map made the difference even clearer: the random policy almost always failed, while the learned policy solved the task consistently. At this stage, SweepAgent is now demonstrating clear reinforcement learning behavior, meaningful baseline improvement, and visual policy playback.
+
+### Next steps
+For the next stage, I plan to:
+- test more room layouts
+- organize experiment outputs more cleanly
+- improve README documentation with figures and GIF previews
+- explore additional environment difficulty settings and evaluation scenarios
