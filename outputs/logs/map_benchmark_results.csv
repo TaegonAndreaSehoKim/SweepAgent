@@ -1,0 +1,9 @@
+map_name,agent_type,avg_reward,avg_steps,avg_cleaned_ratio,success_rate
+default,random,-94.03,64.58,0.91,0.79
+default,learned,76.0,7,1.0,1.0
+harder,random,-300.97,119.86,0.4925,0.02
+harder,learned,76.0,18,1.0,1.0
+wide_room,random,-307.48,143.36,0.705,0.18
+wide_room,learned,80.0,14,1.0,1.0
+corridor,random,-478.95,167.84,0.35666666666666663,0.05
+corridor,learned,63.0,20,1.0,1.0
