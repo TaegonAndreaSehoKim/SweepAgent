@@ -274,6 +274,155 @@ def save_benchmark_plot(results: List[Dict[str, float | str]]) -> Path:
 
     return output_path
 
+def save_reward_plot(results: List[Dict[str, float | str]]) -> Path:
+    # Save a grouped bar chart for average reward by map and agent.
+    ensure_output_dirs()
+    output_path = PROJECT_ROOT / "outputs" / "plots" / "map_benchmark_reward.png"
+
+    map_names = list(MAP_PRESETS.keys())
+    random_values = []
+    learned_values = []
+
+    for map_name in map_names:
+        random_row = next(
+            row for row in results
+            if row["map_name"] == map_name and row["agent_type"] == "random"
+        )
+        learned_row = next(
+            row for row in results
+            if row["map_name"] == map_name and row["agent_type"] == "learned"
+        )
+
+        random_values.append(float(random_row["avg_reward"]))
+        learned_values.append(float(learned_row["avg_reward"]))
+
+    x_positions = list(range(len(map_names)))
+    bar_width = 0.35
+
+    plt.figure(figsize=(10, 5))
+    plt.bar(
+        [x - bar_width / 2 for x in x_positions],
+        random_values,
+        width=bar_width,
+        label="Random",
+    )
+    plt.bar(
+        [x + bar_width / 2 for x in x_positions],
+        learned_values,
+        width=bar_width,
+        label="Learned",
+    )
+    plt.xticks(x_positions, map_names)
+    plt.xlabel("Map")
+    plt.ylabel("Average Reward")
+    plt.title("SweepAgent Benchmark: Average Reward by Map")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+    return output_path
+
+
+def save_steps_plot(results: List[Dict[str, float | str]]) -> Path:
+    # Save a grouped bar chart for average steps by map and agent.
+    ensure_output_dirs()
+    output_path = PROJECT_ROOT / "outputs" / "plots" / "map_benchmark_steps.png"
+
+    map_names = list(MAP_PRESETS.keys())
+    random_values = []
+    learned_values = []
+
+    for map_name in map_names:
+        random_row = next(
+            row for row in results
+            if row["map_name"] == map_name and row["agent_type"] == "random"
+        )
+        learned_row = next(
+            row for row in results
+            if row["map_name"] == map_name and row["agent_type"] == "learned"
+        )
+
+        random_values.append(float(random_row["avg_steps"]))
+        learned_values.append(float(learned_row["avg_steps"]))
+
+    x_positions = list(range(len(map_names)))
+    bar_width = 0.35
+
+    plt.figure(figsize=(10, 5))
+    plt.bar(
+        [x - bar_width / 2 for x in x_positions],
+        random_values,
+        width=bar_width,
+        label="Random",
+    )
+    plt.bar(
+        [x + bar_width / 2 for x in x_positions],
+        learned_values,
+        width=bar_width,
+        label="Learned",
+    )
+    plt.xticks(x_positions, map_names)
+    plt.xlabel("Map")
+    plt.ylabel("Average Steps")
+    plt.title("SweepAgent Benchmark: Average Steps by Map")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+    return output_path
+
+
+def save_cleaned_ratio_plot(results: List[Dict[str, float | str]]) -> Path:
+    # Save a grouped bar chart for cleaned ratio by map and agent.
+    ensure_output_dirs()
+    output_path = PROJECT_ROOT / "outputs" / "plots" / "map_benchmark_cleaned_ratio.png"
+
+    map_names = list(MAP_PRESETS.keys())
+    random_values = []
+    learned_values = []
+
+    for map_name in map_names:
+        random_row = next(
+            row for row in results
+            if row["map_name"] == map_name and row["agent_type"] == "random"
+        )
+        learned_row = next(
+            row for row in results
+            if row["map_name"] == map_name and row["agent_type"] == "learned"
+        )
+
+        random_values.append(float(random_row["avg_cleaned_ratio"]))
+        learned_values.append(float(learned_row["avg_cleaned_ratio"]))
+
+    x_positions = list(range(len(map_names)))
+    bar_width = 0.35
+
+    plt.figure(figsize=(10, 5))
+    plt.bar(
+        [x - bar_width / 2 for x in x_positions],
+        random_values,
+        width=bar_width,
+        label="Random",
+    )
+    plt.bar(
+        [x + bar_width / 2 for x in x_positions],
+        learned_values,
+        width=bar_width,
+        label="Learned",
+    )
+    plt.xticks(x_positions, map_names)
+    plt.xlabel("Map")
+    plt.ylabel("Average Cleaned Ratio")
+    plt.title("SweepAgent Benchmark: Cleaned Ratio by Map")
+    plt.ylim(0, 1.05)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+
+    return output_path
 
 def print_result_block(map_name: str, title: str, result: Dict[str, float]) -> None:
     # Print one compact result block.
@@ -339,12 +488,17 @@ def benchmark_all_maps() -> None:
         )
 
     csv_path = save_results_csv(all_results)
-    plot_path = save_benchmark_plot(all_results)
+    success_plot_path = save_benchmark_plot(all_results)
+    reward_plot_path = save_reward_plot(all_results)
+    steps_plot_path = save_steps_plot(all_results)
+    cleaned_ratio_plot_path = save_cleaned_ratio_plot(all_results)
 
     print("\nSaved benchmark files:")
     print(csv_path)
-    print(plot_path)
-
+    print(success_plot_path)
+    print(reward_plot_path)
+    print(steps_plot_path)
+    print(cleaned_ratio_plot_path)
 
 if __name__ == "__main__":
     benchmark_all_maps()

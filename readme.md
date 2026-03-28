@@ -216,3 +216,41 @@ Generated outputs:
 The learned policy GIF shows a full greedy rollout after training.
 
 The comparison GIF shows the random policy and the learned policy side by side on the same map, making it easier to observe differences in efficiency, path quality, and overall task completion behavior.
+
+## Multi-Map Benchmark
+
+To test whether the learned policy remains effective beyond a single room layout, I evaluated SweepAgent on four map presets:
+- `default`
+- `harder`
+- `wide_room`
+- `corridor`
+
+The benchmark compares a random baseline against a learned greedy Q-learning policy.
+
+### Benchmark Summary
+
+| Map | Agent | Avg Reward | Avg Steps | Avg Cleaned Ratio | Success Rate |
+|---|---|---:|---:|---:|---:|
+| default | Random | -94.03 | 64.58 | 91.00% | 79.00% |
+| default | Learned | 76.00 | 7.00 | 100.00% | 100.00% |
+| harder | Random | -300.97 | 119.86 | 49.25% | 2.00% |
+| harder | Learned | 76.00 | 18.00 | 100.00% | 100.00% |
+| wide_room | Random | -307.48 | 143.36 | 70.50% | 18.00% |
+| wide_room | Learned | 80.00 | 14.00 | 100.00% | 100.00% |
+| corridor | Random | -478.95 | 167.84 | 35.67% | 5.00% |
+| corridor | Learned | 63.00 | 20.00 | 100.00% | 100.00% |
+
+### Benchmark Figures
+
+Generated benchmark plots:
+- `outputs/plots/map_benchmark_success_rate.png`
+- `outputs/plots/map_benchmark_reward.png`
+- `outputs/plots/map_benchmark_steps.png`
+- `outputs/plots/map_benchmark_cleaned_ratio.png`
+
+These figures highlight three important trends:
+1. The learned policy solves every tested map consistently.
+2. The learned policy uses far fewer steps than the random baseline.
+3. The learned policy maintains full cleaning performance even when the room layout becomes more difficult.
+
+Among the current figures, the steps plot and reward plot are especially informative because they show not only task completion, but also efficiency.

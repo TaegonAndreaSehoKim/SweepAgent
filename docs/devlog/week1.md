@@ -222,3 +222,62 @@ For the next stage, I plan to:
 - organize experiment outputs more cleanly
 - improve README documentation with figures and GIF previews
 - explore additional environment difficulty settings and evaluation scenarios
+
+## Day 3 - Multi-Map Benchmarking and Result Visualization
+
+Today I expanded SweepAgent from single-map evaluation to a multi-map benchmark.
+
+### What I completed
+- Added shared map presets in `configs/map_presets.py`
+- Added a benchmarking script in `scripts/benchmark_maps.py`
+- Evaluated both the random baseline and the learned greedy policy across multiple room layouts
+- Saved benchmark results as CSV
+- Saved benchmark comparison plots for:
+  - success rate
+  - average reward
+  - average steps
+  - average cleaned ratio
+
+### Maps included
+The benchmark currently includes four map presets:
+- `default`
+- `harder`
+- `wide_room`
+- `corridor`
+
+### Key results
+The learned policy achieved 100% success rate on all four maps.
+
+The random baseline performed much worse, especially as map difficulty increased:
+- `default`: 79.00%
+- `harder`: 2.00%
+- `wide_room`: 18.00%
+- `corridor`: 5.00%
+
+The learned policy also remained much more efficient:
+- `default`: 7.00 average steps
+- `harder`: 18.00 average steps
+- `wide_room`: 14.00 average steps
+- `corridor`: 20.00 average steps
+
+In contrast, the random baseline required far more steps and often failed to complete the task.
+
+### Output files
+Saved benchmark outputs:
+- `outputs/logs/map_benchmark_results.csv`
+- `outputs/plots/map_benchmark_success_rate.png`
+- `outputs/plots/map_benchmark_reward.png`
+- `outputs/plots/map_benchmark_steps.png`
+- `outputs/plots/map_benchmark_cleaned_ratio.png`
+
+### Takeaway
+This stage makes SweepAgent look much more like a real RL project rather than a single-environment demo.
+
+The learned agent no longer just performs well on one small room. It now shows consistent performance across multiple layouts, with clear advantages over the random baseline in completion, reward, and efficiency.
+
+### Next steps
+For the next stage, I plan to:
+- improve README presentation with benchmark figures
+- organize outputs more cleanly
+- try additional room layouts
+- explore more challenging environment settings
