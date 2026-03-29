@@ -64,83 +64,11 @@ The environment is now fully playable and produces stable episode results.
 The random baseline performs better than expected because the current map is small and the step budget is generous. This means the environment is working, but I may need to increase difficulty later so that improvements from Q-learning are more visible.
 
 ### Next steps
-For Day 2, I plan to:
+For Day 2, I planned to:
 - implement a Q-learning agent
 - train it with epsilon-greedy exploration
 - compare Q-learning against the random baseline
 - visualize learning progress with reward and cleaning performance curves
-
-## Day 2 - Q-Learning Training and Agent Comparison
-
-Today I implemented the first learning-based agent for SweepAgent using tabular Q-learning and verified that it significantly outperforms the random baseline.
-
-### What I completed
-- Implemented `QLearningAgent` in `agents/q_learning_agent.py`
-- Added epsilon-greedy exploration
-- Added Q-table update logic
-- Added a training script in `scripts/train_q_learning.py`
-- Saved training plots for:
-  - reward
-  - cleaned ratio
-  - success trend
-  - epsilon decay
-- Added shared experiment settings in `configs/default_config.py`
-- Added `scripts/compare_agents.py` to compare the random baseline and the learned greedy policy
-- Added a harder map preset for a more meaningful evaluation
-
-### Training result on the default map
-After training for 1000 episodes:
-- Final epsilon: `0.0500`
-- Learned Q-table states: `64`
-- Last 100 average reward: `75.02`
-- Last 100 average cleaned ratio: `100.00%`
-- Last 100 success rate: `100.00%`
-
-The learned greedy policy cleaned the full room in 7 steps with total reward `76`.
-
-### Comparison on the default map
-Random baseline over 100 episodes:
-- Average reward: `-94.03`
-- Average steps: `64.58`
-- Average cleaned ratio: `91.00%`
-- Success rate: `79.00%`
-
-Learned greedy policy over 100 episodes:
-- Average reward: `76.00`
-- Average steps: `7.00`
-- Average cleaned ratio: `100.00%`
-- Success rate: `100.00%`
-
-Improvement:
-- Reward gain: `170.03`
-- Step reduction: `57.58`
-- Cleaned ratio gain: `9.00 percentage points`
-- Success rate gain: `21.00 percentage points`
-
-### Comparison on the harder map
-Random baseline over 100 episodes:
-- Average reward: `-300.97`
-- Average steps: `119.86`
-- Average cleaned ratio: `49.25%`
-- Success rate: `2.00%`
-
-Learned greedy policy over 100 episodes:
-- Average reward: `76.00`
-- Average steps: `18.00`
-- Average cleaned ratio: `100.00%`
-- Success rate: `100.00%`
-
-### Takeaway
-The default map already showed that Q-learning learns a much more efficient cleaning strategy than a random walk.
-
-The harder map made the difference even clearer: the random policy almost always failed, while the learned policy solved the task consistently. This confirms that SweepAgent is now demonstrating meaningful reinforcement learning behavior rather than just environment interaction.
-
-### Next steps
-For the next stage, I plan to:
-- add step-by-step visual playback of agent movement
-- save learned trajectories as GIFs or animations
-- test more room layouts
-- prepare cleaner result summaries for the README
 
 ## Day 2 - Q-Learning Training, Evaluation, and Visualization
 
@@ -217,7 +145,7 @@ The default map already showed that Q-learning learns a much more efficient clea
 The harder map made the difference even clearer: the random policy almost always failed, while the learned policy solved the task consistently. At this stage, SweepAgent is now demonstrating clear reinforcement learning behavior, meaningful baseline improvement, and visual policy playback.
 
 ### Next steps
-For the next stage, I plan to:
+For the next stage, I planned to:
 - test more room layouts
 - organize experiment outputs more cleanly
 - improve README documentation with figures and GIF previews
@@ -276,8 +204,82 @@ This stage makes SweepAgent look much more like a real RL project rather than a 
 The learned agent no longer just performs well on one small room. It now shows consistent performance across multiple layouts, with clear advantages over the random baseline in completion, reward, and efficiency.
 
 ### Next steps
-For the next stage, I plan to:
+For the next stage, I planned to:
 - improve README presentation with benchmark figures
 - organize outputs more cleanly
 - try additional room layouts
 - explore more challenging environment settings
+
+## Day 4 - Experiment Pipeline Refactor and Checkpoint Reuse
+
+Today I refactored the experiment workflow so that training, comparison, rendering, and benchmarking all follow the same map and checkpoint rules.
+
+### What I completed
+- Added checkpoint serialization in `agents/q_learning_agent.py`
+- Added JSON-based save/load support for the Q-learning agent
+- Added shared utilities in `utils/experiment_utils.py`
+- Standardized map-specific checkpoint naming
+- Added backward compatibility for the older default-map checkpoint name
+- Updated `scripts/compare_agents.py` to reuse saved checkpoints
+- Updated `scripts/render_policy_gif.py` to reuse saved checkpoints
+- Updated `scripts/render_comparison_gif.py` to reuse saved checkpoints
+- Updated `scripts/benchmark_maps.py` to use shared experiment utilities
+- Updated `scripts/train_q_learning.py` to save map-specific checkpoints and map-specific training plots
+
+### Why this matters
+Previously, several scripts retrained the Q-learning agent every time they were run.  
+This made experiments slower and introduced unnecessary duplication across scripts.
+
+With the new structure:
+- trained agents are reused automatically
+- map-specific policies are stored separately
+- all experiment scripts follow the same environment and checkpoint rules
+- adding new maps is easier because the workflow is now driven by `MAP_PRESETS`
+
+### Checkpoint outputs
+The project now saves separate checkpoints for each map:
+- `outputs/checkpoints/q_learning_agent_default_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_harder_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_wide_room_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_corridor_seed_42.json`
+
+### Updated benchmark observations
+The random baseline degraded quickly as map complexity increased, while the learned greedy Q-learning agent consistently solved every shared map preset.
+
+Observed success rates:
+- Random agent:
+  - `default`: 79%
+  - `harder`: 2%
+  - `wide_room`: 18%
+  - `corridor`: 5%
+- Learned greedy agent:
+  - `default`: 100%
+  - `harder`: 100%
+  - `wide_room`: 100%
+  - `corridor`: 100%
+
+### Generated artifacts
+- Checkpoints:
+  - `outputs/checkpoints/q_learning_agent_default_seed_42.json`
+  - `outputs/checkpoints/q_learning_agent_harder_seed_42.json`
+  - `outputs/checkpoints/q_learning_agent_wide_room_seed_42.json`
+  - `outputs/checkpoints/q_learning_agent_corridor_seed_42.json`
+- GIFs:
+  - `outputs/gifs/learned_policy_harder.gif`
+  - `outputs/gifs/comparison_harder.gif`
+- Benchmark outputs:
+  - `outputs/logs/map_benchmark_results.csv`
+  - `outputs/plots/map_benchmark_success_rate.png`
+  - `outputs/plots/map_benchmark_reward.png`
+  - `outputs/plots/map_benchmark_steps.png`
+  - `outputs/plots/map_benchmark_cleaned_ratio.png`
+
+### Takeaway
+The project now has a reusable and scalable experiment pipeline. The codebase is cleaner, the scripts are faster to rerun, and the benchmark evidence is much easier to present.
+
+### Next steps
+For the next stage, I plan to:
+- expose script settings through CLI arguments
+- improve README presentation with embedded benchmark figures
+- try additional environment variants
+- explore richer RL extensions such as battery constraints or obstacles
