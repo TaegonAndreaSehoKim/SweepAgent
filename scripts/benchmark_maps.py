@@ -10,196 +10,85 @@ import matplotlib.pyplot as plt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
-    # Add the project root so local imports work from this script.
+    # Add the project root so local modules can be imported when run as a script.
     sys.path.append(str(PROJECT_ROOT))
 
 from agents.q_learning_agent import QLearningAgent
 from agents.random_agent import RandomAgent
-from configs.map_presets import (
-    DISCOUNT_FACTOR,
-    EPSILON_DECAY,
-    EPSILON_MIN,
-    EPSILON_START,
-    LEARNING_RATE,
-    MAP_PRESETS,
-    PRINT_EVERY,
-    REWARD_CLEAN,
-    REWARD_FINISH,
-    REWARD_INVALID,
-    REWARD_MOVE,
-    REWARD_REVISIT,
-    TRAIN_EPISODES,
-    TRAIN_SEED,
-)
+from configs.map_presets import MAP_PRESETS
 from env.grid_clean_env import GridCleanEnv
+from utils.experiment_utils import build_env, load_or_train_q_agent
 
 
 def ensure_output_dirs() -> None:
-    # Create output directories if they do not exist.
+    # Create output folders used by benchmark logs and plots.
     (PROJECT_ROOT / "outputs" / "plots").mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "outputs" / "logs").mkdir(parents=True, exist_ok=True)
 
 
-def build_env(map_name: str) -> GridCleanEnv:
-    # Build one environment from the selected preset.
-    if map_name not in MAP_PRESETS:
-        raise ValueError(f"Unknown map_name: {map_name}")
-
-    preset = MAP_PRESETS[map_name]
-
-    return GridCleanEnv(
-        grid_map=preset["grid_map"],
-        max_steps=preset["max_steps"],
-        reward_clean=REWARD_CLEAN,
-        reward_move=REWARD_MOVE,
-        reward_revisit=REWARD_REVISIT,
-        reward_invalid=REWARD_INVALID,
-        reward_finish=REWARD_FINISH,
-    )
-
-
-def evaluate_random_agent(
+def run_episode(
     env: GridCleanEnv,
-    num_episodes: int = 100,
-    seed: int = 42,
+    agent,
+    training: bool = False,
 ) -> Dict[str, float]:
-    # Evaluate the random baseline on one map.
-    agent = RandomAgent(action_space_size=len(env.ACTIONS), seed=seed)
-    episode_results: List[Dict[str, float]] = []
+    # Run one full episode and collect summary statistics.
+    state = env.reset()
+    done = False
+    total_reward = 0.0
+    final_info: Dict[str, float] = {}
 
-    for _ in range(num_episodes):
-        state = env.reset()
-        done = False
-        total_reward = 0.0
-        final_info: Dict[str, float] = {}
-
-        while not done:
+    while not done:
+        if isinstance(agent, QLearningAgent):
+            action = agent.select_action(state, training=training)
+        else:
             action = agent.select_action(state)
-            next_state, reward, done, info = env.step(action)
 
-            total_reward += reward
-            state = next_state
-            final_info = info
-
-        episode_results.append(
-            {
-                "avg_reward": total_reward,
-                "avg_steps": final_info["steps_taken"],
-                "avg_cleaned_ratio": final_info["cleaned_ratio"],
-                "success_rate": 1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0,
-            }
-        )
+        next_state, reward, done, info = env.step(action)
+        state = next_state
+        total_reward += reward
+        final_info = info
 
     return {
-        "avg_reward": mean(result["avg_reward"] for result in episode_results),
-        "avg_steps": mean(result["avg_steps"] for result in episode_results),
-        "avg_cleaned_ratio": mean(
-            result["avg_cleaned_ratio"] for result in episode_results
-        ),
-        "success_rate": mean(result["success_rate"] for result in episode_results),
+        "avg_reward": total_reward,
+        "avg_steps": final_info["steps_taken"],
+        "avg_cleaned_ratio": final_info["cleaned_ratio"],
+        "success_rate": 1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0,
     }
 
 
-def train_q_learning_agent(
+def evaluate_agent(
     env: GridCleanEnv,
-    num_episodes: int = TRAIN_EPISODES,
-    seed: int = TRAIN_SEED,
-    print_every: int = PRINT_EVERY,
-) -> QLearningAgent:
-    # Train a Q-learning agent on one map.
-    agent = QLearningAgent(
-        action_space_size=len(env.ACTIONS),
-        learning_rate=LEARNING_RATE,
-        discount_factor=DISCOUNT_FACTOR,
-        epsilon=EPSILON_START,
-        epsilon_decay=EPSILON_DECAY,
-        epsilon_min=EPSILON_MIN,
-        seed=seed,
-    )
-
-    rewards: List[float] = []
-    cleaned_ratios: List[float] = []
-    success_rates: List[float] = []
-
-    for episode in range(1, num_episodes + 1):
-        state = env.reset()
-        done = False
-        total_reward = 0.0
-        final_info: Dict[str, float] = {}
-
-        while not done:
-            action = agent.select_action(state, training=True)
-            next_state, reward, done, info = env.step(action)
-
-            agent.update(
-                state=state,
-                action=action,
-                reward=reward,
-                next_state=next_state,
-                done=done,
-            )
-
-            total_reward += reward
-            state = next_state
-            final_info = info
-
-        agent.decay_epsilon()
-
-        rewards.append(total_reward)
-        cleaned_ratios.append(final_info["cleaned_ratio"])
-        success_rates.append(1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0)
-
-        if episode % print_every == 0:
-            print(
-                f"Episode {episode}/{num_episodes} | "
-                f"avg_reward={mean(rewards[-print_every:]):.2f} | "
-                f"avg_cleaned_ratio={mean(cleaned_ratios[-print_every:]):.2%} | "
-                f"success_rate={mean(success_rates[-print_every:]):.2%} | "
-                f"epsilon={agent.epsilon:.4f}"
-            )
-
-    return agent
-
-
-def evaluate_learned_agent(
-    env: GridCleanEnv,
-    agent: QLearningAgent,
+    agent,
     num_episodes: int = 100,
 ) -> Dict[str, float]:
-    # Evaluate the learned greedy policy on one map.
-    episode_results: List[Dict[str, float]] = []
+    # Evaluate one agent over multiple episodes and average the metrics.
+    rewards: List[float] = []
+    steps: List[float] = []
+    cleaned_ratios: List[float] = []
+    successes: List[float] = []
 
     for _ in range(num_episodes):
-        state = env.reset()
-        done = False
-        total_reward = 0.0
-        final_info: Dict[str, float] = {}
-
-        while not done:
-            action = agent.get_policy_action(state)
-            next_state, reward, done, info = env.step(action)
-
-            total_reward += reward
-            state = next_state
-            final_info = info
-
-        episode_results.append(
-            {
-                "avg_reward": total_reward,
-                "avg_steps": final_info["steps_taken"],
-                "avg_cleaned_ratio": final_info["cleaned_ratio"],
-                "success_rate": 1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0,
-            }
-        )
+        result = run_episode(env=env, agent=agent, training=False)
+        rewards.append(result["avg_reward"])
+        steps.append(result["avg_steps"])
+        cleaned_ratios.append(result["avg_cleaned_ratio"])
+        successes.append(result["success_rate"])
 
     return {
-        "avg_reward": mean(result["avg_reward"] for result in episode_results),
-        "avg_steps": mean(result["avg_steps"] for result in episode_results),
-        "avg_cleaned_ratio": mean(
-            result["avg_cleaned_ratio"] for result in episode_results
-        ),
-        "success_rate": mean(result["success_rate"] for result in episode_results),
+        "avg_reward": mean(rewards),
+        "avg_steps": mean(steps),
+        "avg_cleaned_ratio": mean(cleaned_ratios),
+        "success_rate": mean(successes),
     }
+
+
+def print_summary(title: str, summary: Dict[str, float]) -> None:
+    # Print a compact summary block for one benchmark result.
+    print(f"\n=== {title} ===")
+    print(f"average reward: {summary['avg_reward']:.2f}")
+    print(f"average steps: {summary['avg_steps']:.2f}")
+    print(f"average cleaned ratio: {summary['avg_cleaned_ratio']:.2%}")
+    print(f"success rate: {summary['success_rate']:.2%}")
 
 
 def save_results_csv(results: List[Dict[str, float | str]]) -> Path:
@@ -224,281 +113,148 @@ def save_results_csv(results: List[Dict[str, float | str]]) -> Path:
     return output_path
 
 
-def save_benchmark_plot(results: List[Dict[str, float | str]]) -> Path:
-    # Save a grouped bar chart for success rate by map and agent.
+def save_bar_plot(
+    results: List[Dict[str, float | str]],
+    metric_key: str,
+    y_label: str,
+    title: str,
+    output_filename: str,
+) -> Path:
+    # Save a grouped bar chart for one benchmark metric.
     ensure_output_dirs()
-    output_path = PROJECT_ROOT / "outputs" / "plots" / "map_benchmark_success_rate.png"
-
     map_names = list(MAP_PRESETS.keys())
-    random_success = []
-    learned_success = []
 
-    for map_name in map_names:
-        random_row = next(
-            row for row in results
-            if row["map_name"] == map_name and row["agent_type"] == "random"
-        )
-        learned_row = next(
-            row for row in results
-            if row["map_name"] == map_name and row["agent_type"] == "learned"
-        )
-
-        random_success.append(float(random_row["success_rate"]))
-        learned_success.append(float(learned_row["success_rate"]))
-
-    x_positions = list(range(len(map_names)))
-    bar_width = 0.35
-
-    plt.figure(figsize=(10, 5))
-    plt.bar(
-        [x - bar_width / 2 for x in x_positions],
-        random_success,
-        width=bar_width,
-        label="Random",
-    )
-    plt.bar(
-        [x + bar_width / 2 for x in x_positions],
-        learned_success,
-        width=bar_width,
-        label="Learned",
-    )
-    plt.xticks(x_positions, map_names)
-    plt.xlabel("Map")
-    plt.ylabel("Success Rate")
-    plt.title("SweepAgent Benchmark: Success Rate by Map")
-    plt.ylim(0, 1.05)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(output_path)
-    plt.close()
-
-    return output_path
-
-def save_reward_plot(results: List[Dict[str, float | str]]) -> Path:
-    # Save a grouped bar chart for average reward by map and agent.
-    ensure_output_dirs()
-    output_path = PROJECT_ROOT / "outputs" / "plots" / "map_benchmark_reward.png"
-
-    map_names = list(MAP_PRESETS.keys())
     random_values = []
     learned_values = []
 
     for map_name in map_names:
         random_row = next(
-            row for row in results
+            row
+            for row in results
             if row["map_name"] == map_name and row["agent_type"] == "random"
         )
         learned_row = next(
-            row for row in results
+            row
+            for row in results
             if row["map_name"] == map_name and row["agent_type"] == "learned"
         )
 
-        random_values.append(float(random_row["avg_reward"]))
-        learned_values.append(float(learned_row["avg_reward"]))
+        random_values.append(float(random_row[metric_key]))
+        learned_values.append(float(learned_row[metric_key]))
 
     x_positions = list(range(len(map_names)))
-    bar_width = 0.35
+    bar_width = 0.36
 
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(10, 5.5))
     plt.bar(
         [x - bar_width / 2 for x in x_positions],
         random_values,
         width=bar_width,
-        label="Random",
+        label="Random Agent",
     )
     plt.bar(
         [x + bar_width / 2 for x in x_positions],
         learned_values,
         width=bar_width,
-        label="Learned",
+        label="Learned Greedy Agent",
     )
+
     plt.xticks(x_positions, map_names)
-    plt.xlabel("Map")
-    plt.ylabel("Average Reward")
-    plt.title("SweepAgent Benchmark: Average Reward by Map")
+    plt.ylabel(y_label)
+    plt.title(title)
     plt.legend()
     plt.tight_layout()
+
+    output_path = PROJECT_ROOT / "outputs" / "plots" / output_filename
     plt.savefig(output_path)
     plt.close()
 
     return output_path
 
 
-def save_steps_plot(results: List[Dict[str, float | str]]) -> Path:
-    # Save a grouped bar chart for average steps by map and agent.
-    ensure_output_dirs()
-    output_path = PROJECT_ROOT / "outputs" / "plots" / "map_benchmark_steps.png"
-
-    map_names = list(MAP_PRESETS.keys())
-    random_values = []
-    learned_values = []
-
-    for map_name in map_names:
-        random_row = next(
-            row for row in results
-            if row["map_name"] == map_name and row["agent_type"] == "random"
-        )
-        learned_row = next(
-            row for row in results
-            if row["map_name"] == map_name and row["agent_type"] == "learned"
-        )
-
-        random_values.append(float(random_row["avg_steps"]))
-        learned_values.append(float(learned_row["avg_steps"]))
-
-    x_positions = list(range(len(map_names)))
-    bar_width = 0.35
-
-    plt.figure(figsize=(10, 5))
-    plt.bar(
-        [x - bar_width / 2 for x in x_positions],
-        random_values,
-        width=bar_width,
-        label="Random",
-    )
-    plt.bar(
-        [x + bar_width / 2 for x in x_positions],
-        learned_values,
-        width=bar_width,
-        label="Learned",
-    )
-    plt.xticks(x_positions, map_names)
-    plt.xlabel("Map")
-    plt.ylabel("Average Steps")
-    plt.title("SweepAgent Benchmark: Average Steps by Map")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(output_path)
-    plt.close()
-
-    return output_path
-
-
-def save_cleaned_ratio_plot(results: List[Dict[str, float | str]]) -> Path:
-    # Save a grouped bar chart for cleaned ratio by map and agent.
-    ensure_output_dirs()
-    output_path = PROJECT_ROOT / "outputs" / "plots" / "map_benchmark_cleaned_ratio.png"
-
-    map_names = list(MAP_PRESETS.keys())
-    random_values = []
-    learned_values = []
-
-    for map_name in map_names:
-        random_row = next(
-            row for row in results
-            if row["map_name"] == map_name and row["agent_type"] == "random"
-        )
-        learned_row = next(
-            row for row in results
-            if row["map_name"] == map_name and row["agent_type"] == "learned"
-        )
-
-        random_values.append(float(random_row["avg_cleaned_ratio"]))
-        learned_values.append(float(learned_row["avg_cleaned_ratio"]))
-
-    x_positions = list(range(len(map_names)))
-    bar_width = 0.35
-
-    plt.figure(figsize=(10, 5))
-    plt.bar(
-        [x - bar_width / 2 for x in x_positions],
-        random_values,
-        width=bar_width,
-        label="Random",
-    )
-    plt.bar(
-        [x + bar_width / 2 for x in x_positions],
-        learned_values,
-        width=bar_width,
-        label="Learned",
-    )
-    plt.xticks(x_positions, map_names)
-    plt.xlabel("Map")
-    plt.ylabel("Average Cleaned Ratio")
-    plt.title("SweepAgent Benchmark: Cleaned Ratio by Map")
-    plt.ylim(0, 1.05)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(output_path)
-    plt.close()
-
-    return output_path
-
-def print_result_block(map_name: str, title: str, result: Dict[str, float]) -> None:
-    # Print one compact result block.
-    print(f"\n[{map_name}] {title}")
-    print(f"average reward: {result['avg_reward']:.2f}")
-    print(f"average steps: {result['avg_steps']:.2f}")
-    print(f"average cleaned ratio: {result['avg_cleaned_ratio']:.2%}")
-    print(f"success rate: {result['success_rate']:.2%}")
-
-
-def benchmark_all_maps() -> None:
-    # Train and compare random vs learned policy across all presets.
+def main() -> None:
+    # Benchmark both policies across all shared map presets.
     all_results: List[Dict[str, float | str]] = []
 
     for map_name in MAP_PRESETS:
-        print(f"\n==============================")
+        print("\n==============================")
         print(f"Running benchmark for map: {map_name}")
-        print(f"==============================")
+        print("==============================")
 
-        random_env = build_env(map_name)
-        train_env = build_env(map_name)
-        eval_env = build_env(map_name)
-
-        random_result = evaluate_random_agent(
+        random_env = build_env(map_name=map_name)
+        random_agent = RandomAgent(action_space_size=len(random_env.ACTIONS), seed=42)
+        random_result = evaluate_agent(
             env=random_env,
-            num_episodes=100,
-            seed=42,
-        )
-        print_result_block(map_name, "Random Agent", random_result)
-
-        learned_agent = train_q_learning_agent(
-            env=train_env,
-            num_episodes=TRAIN_EPISODES,
-            seed=TRAIN_SEED,
-            print_every=PRINT_EVERY,
-        )
-        learned_result = evaluate_learned_agent(
-            env=eval_env,
-            agent=learned_agent,
+            agent=random_agent,
             num_episodes=100,
         )
-        print_result_block(map_name, "Learned Greedy Agent", learned_result)
-
+        print_summary(f"{map_name} Random Agent", random_result)
         all_results.append(
             {
                 "map_name": map_name,
                 "agent_type": "random",
-                "avg_reward": random_result["avg_reward"],
-                "avg_steps": random_result["avg_steps"],
-                "avg_cleaned_ratio": random_result["avg_cleaned_ratio"],
-                "success_rate": random_result["success_rate"],
+                **random_result,
             }
         )
+
+        learned_env = build_env(map_name=map_name)
+        learned_agent = load_or_train_q_agent(
+            map_name=map_name,
+            num_episodes=1000,
+            seed=42,
+        )
+        learned_result = evaluate_agent(
+            env=learned_env,
+            agent=learned_agent,
+            num_episodes=100,
+        )
+        print_summary(f"{map_name} Learned Greedy Agent", learned_result)
         all_results.append(
             {
                 "map_name": map_name,
                 "agent_type": "learned",
-                "avg_reward": learned_result["avg_reward"],
-                "avg_steps": learned_result["avg_steps"],
-                "avg_cleaned_ratio": learned_result["avg_cleaned_ratio"],
-                "success_rate": learned_result["success_rate"],
+                **learned_result,
             }
         )
 
     csv_path = save_results_csv(all_results)
-    success_plot_path = save_benchmark_plot(all_results)
-    reward_plot_path = save_reward_plot(all_results)
-    steps_plot_path = save_steps_plot(all_results)
-    cleaned_ratio_plot_path = save_cleaned_ratio_plot(all_results)
 
-    print("\nSaved benchmark files:")
-    print(csv_path)
-    print(success_plot_path)
-    print(reward_plot_path)
-    print(steps_plot_path)
-    print(cleaned_ratio_plot_path)
+    success_plot_path = save_bar_plot(
+        results=all_results,
+        metric_key="success_rate",
+        y_label="Success Rate",
+        title="SweepAgent Success Rate by Map",
+        output_filename="map_benchmark_success_rate.png",
+    )
+    reward_plot_path = save_bar_plot(
+        results=all_results,
+        metric_key="avg_reward",
+        y_label="Average Reward",
+        title="SweepAgent Reward by Map",
+        output_filename="map_benchmark_reward.png",
+    )
+    steps_plot_path = save_bar_plot(
+        results=all_results,
+        metric_key="avg_steps",
+        y_label="Average Steps",
+        title="SweepAgent Steps by Map",
+        output_filename="map_benchmark_steps.png",
+    )
+    cleaned_plot_path = save_bar_plot(
+        results=all_results,
+        metric_key="avg_cleaned_ratio",
+        y_label="Average Cleaned Ratio",
+        title="SweepAgent Cleaned Ratio by Map",
+        output_filename="map_benchmark_cleaned_ratio.png",
+    )
+
+    print("\n=== Saved Benchmark Artifacts ===")
+    print(csv_path.relative_to(PROJECT_ROOT))
+    print(success_plot_path.relative_to(PROJECT_ROOT))
+    print(reward_plot_path.relative_to(PROJECT_ROOT))
+    print(steps_plot_path.relative_to(PROJECT_ROOT))
+    print(cleaned_plot_path.relative_to(PROJECT_ROOT))
+
 
 if __name__ == "__main__":
-    benchmark_all_maps()
+    main()
