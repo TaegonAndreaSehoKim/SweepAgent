@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import random
-from typing import Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 
 State = Tuple[int, int, int]
@@ -28,6 +30,9 @@ class QLearningAgent:
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
 
+        # Keep the seed so the agent can be reconstructed later.
+        self.seed = seed
+
         # Use a local RNG so runs can be reproduced with the same seed.
         self.rng = random.Random(seed)
 
@@ -38,6 +43,16 @@ class QLearningAgent:
         # Lazily initialize unseen states with zero Q-values.
         if state not in self.q_table:
             self.q_table[state] = [0.0 for _ in range(self.action_space_size)]
+
+    def _state_to_key(self, state: State) -> str:
+        # Convert a tuple state into a JSON-safe string key.
+        row, col, cleaned_mask = state
+        return f"{row},{col},{cleaned_mask}"
+
+    def _key_to_state(self, key: str) -> State:
+        # Convert a JSON string key back into a tuple state.
+        row, col, cleaned_mask = key.split(",")
+        return (int(row), int(col), int(cleaned_mask))
 
     def get_q_values(self, state: State) -> List[float]:
         # Return the Q-values for the given state.
@@ -92,3 +107,56 @@ class QLearningAgent:
     def get_policy_action(self, state: State) -> int:
         # Select the greedy action without exploration.
         return self.select_action(state, training=False)
+
+    def to_dict(self) -> Dict[str, Any]:
+        # Convert the full agent state into a JSON-serializable dictionary.
+        return {
+            "action_space_size": self.action_space_size,
+            "learning_rate": self.learning_rate,
+            "discount_factor": self.discount_factor,
+            "epsilon": self.epsilon,
+            "epsilon_decay": self.epsilon_decay,
+            "epsilon_min": self.epsilon_min,
+            "seed": self.seed,
+            "q_table": {
+                self._state_to_key(state): q_values
+                for state, q_values in self.q_table.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "QLearningAgent":
+        # Rebuild an agent instance from a serialized dictionary.
+        agent = cls(
+            action_space_size=payload["action_space_size"],
+            learning_rate=payload["learning_rate"],
+            discount_factor=payload["discount_factor"],
+            epsilon=payload["epsilon"],
+            epsilon_decay=payload["epsilon_decay"],
+            epsilon_min=payload["epsilon_min"],
+            seed=payload.get("seed"),
+        )
+
+        agent.q_table = {
+            agent._key_to_state(state_key): list(q_values)
+            for state_key, q_values in payload["q_table"].items()
+        }
+        return agent
+
+    def save(self, file_path: str | Path) -> None:
+        # Save the agent checkpoint as a JSON file.
+        output_path = Path(file_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with output_path.open("w", encoding="utf-8") as file:
+            json.dump(self.to_dict(), file, indent=2)
+
+    @classmethod
+    def load(cls, file_path: str | Path) -> "QLearningAgent":
+        # Load the agent checkpoint from a JSON file.
+        input_path = Path(file_path)
+
+        with input_path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+
+        return cls.from_dict(payload)
