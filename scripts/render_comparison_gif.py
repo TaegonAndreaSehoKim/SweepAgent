@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -27,6 +28,44 @@ from utils.experiment_utils import build_env, load_or_train_q_agent
 
 
 State = Tuple[int, int, int]
+
+
+def parse_args() -> argparse.Namespace:
+    # Parse command-line arguments for comparison GIF rendering.
+    parser = argparse.ArgumentParser(
+        description="Render a side-by-side GIF comparing random and learned SweepAgent policies."
+    )
+    parser.add_argument(
+        "--map-name",
+        type=str,
+        default="harder",
+        help="Map preset name (for example: default, harder, wide_room, corridor).",
+    )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=TRAIN_EPISODES,
+        help="Training episodes used only when a checkpoint does not already exist.",
+    )
+    parser.add_argument(
+        "--train-seed",
+        type=int,
+        default=TRAIN_SEED,
+        help="Seed used for the Q-learning checkpoint lookup or training.",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=42,
+        help="Seed used for the random baseline rollout.",
+    )
+    parser.add_argument(
+        "--frame-duration",
+        type=float,
+        default=0.6,
+        help="Duration of each GIF frame in seconds.",
+    )
+    return parser.parse_args()
 
 
 def get_tile_color(env: GridCleanEnv, row: int, col: int) -> str:
@@ -315,11 +354,12 @@ def render_comparison_gif(
 
 
 if __name__ == "__main__":
+    args = parse_args()
     saved_path = render_comparison_gif(
-        map_name="harder",
-        num_episodes=1000,
-        train_seed=42,
-        random_seed=42,
-        frame_duration=0.6,
+        map_name=args.map_name,
+        num_episodes=args.episodes,
+        train_seed=args.train_seed,
+        random_seed=args.random_seed,
+        frame_duration=args.frame_duration,
     )
     print(f"Saved comparison GIF to: {saved_path}")
