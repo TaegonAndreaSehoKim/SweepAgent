@@ -17,9 +17,20 @@ from env.grid_clean_env import GridCleanEnv
 
 
 def ensure_output_dirs() -> None:
-    # Create output folders before saving plots or logs.
+    # Create output folders before saving plots, logs, or checkpoints.
     (PROJECT_ROOT / "outputs" / "plots").mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "outputs" / "logs").mkdir(parents=True, exist_ok=True)
+    (PROJECT_ROOT / "outputs" / "checkpoints").mkdir(parents=True, exist_ok=True)
+
+
+def get_checkpoint_path(seed: int) -> Path:
+    # Build a stable checkpoint path based on the training seed.
+    return (
+        PROJECT_ROOT
+        / "outputs"
+        / "checkpoints"
+        / f"q_learning_agent_seed_{seed}.json"
+    )
 
 
 def run_training_episode(
@@ -191,7 +202,7 @@ def train_q_learning(
     num_episodes: int = 1000,
     seed: int = 42,
     print_every: int = 100,
-) -> None:
+) -> QLearningAgent:
     # Build the environment and the Q-learning agent.
     env = GridCleanEnv()
     agent = QLearningAgent(
@@ -240,6 +251,10 @@ def train_q_learning(
         epsilons=epsilons,
     )
 
+    # Save the trained agent checkpoint.
+    checkpoint_path = get_checkpoint_path(seed=seed)
+    agent.save(checkpoint_path)
+
     print("\n=== Final Training Summary ===")
     print(f"episodes: {num_episodes}")
     print(f"final epsilon: {agent.epsilon:.4f}")
@@ -247,6 +262,7 @@ def train_q_learning(
     print(f"last 100 avg reward: {mean(rewards[-100:]):.2f}")
     print(f"last 100 avg cleaned ratio: {mean(cleaned_ratios[-100:]):.2%}")
     print(f"last 100 success rate: {mean(success_rates[-100:]):.2%}")
+    print(f"checkpoint saved to: {checkpoint_path.relative_to(PROJECT_ROOT)}")
 
     # Render one final greedy episode to inspect the learned behavior.
     run_greedy_episode(env=env, agent=agent, render=True)
@@ -256,6 +272,8 @@ def train_q_learning(
     print("outputs/plots/training_cleaned_ratio.png")
     print("outputs/plots/training_success.png")
     print("outputs/plots/training_epsilon.png")
+
+    return agent
 
 
 if __name__ == "__main__":
