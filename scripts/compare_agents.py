@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 from statistics import mean
@@ -14,6 +15,38 @@ from agents.q_learning_agent import QLearningAgent
 from agents.random_agent import RandomAgent
 from env.grid_clean_env import GridCleanEnv
 from utils.experiment_utils import build_env, load_or_train_q_agent
+
+
+def parse_args() -> argparse.Namespace:
+    # Parse command-line arguments for comparison configuration.
+    parser = argparse.ArgumentParser(
+        description="Compare the random baseline and Q-learning agent on a selected map."
+    )
+    parser.add_argument(
+        "--map-name",
+        type=str,
+        default="default",
+        help="Map preset name (for example: default, harder, wide_room, corridor).",
+    )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=1000,
+        help="Training episodes used only when a checkpoint does not already exist.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed used for the Q-learning checkpoint lookup or training.",
+    )
+    parser.add_argument(
+        "--eval-episodes",
+        type=int,
+        default=100,
+        help="Number of evaluation episodes for each agent.",
+    )
+    return parser.parse_args()
 
 
 def run_episode(
@@ -84,30 +117,32 @@ def print_summary(title: str, summary: Dict[str, float]) -> None:
 
 
 def main() -> None:
-    # Use the shared default environment preset.
-    env = build_env(map_name="default")
+    args = parse_args()
 
-    print("Evaluating random baseline...")
-    random_agent = RandomAgent(action_space_size=len(env.ACTIONS), seed=42)
+    # Use the shared environment preset selected by the user.
+    env = build_env(map_name=args.map_name)
+
+    print(f"Evaluating random baseline on map='{args.map_name}'...")
+    random_agent = RandomAgent(action_space_size=len(env.ACTIONS), seed=args.seed)
     random_summary = evaluate_agent(
         env=env,
         agent=random_agent,
-        num_episodes=100,
+        num_episodes=args.eval_episodes,
     )
     print_summary("Random Agent", random_summary)
 
-    print("\nPreparing Q-learning agent...")
+    print(f"\nPreparing Q-learning agent for map='{args.map_name}'...")
     q_agent = load_or_train_q_agent(
-        map_name="default",
-        num_episodes=1000,
-        seed=42,
+        map_name=args.map_name,
+        num_episodes=args.episodes,
+        seed=args.seed,
     )
 
     print("\nEvaluating Q-learning agent...")
     q_summary = evaluate_agent(
         env=env,
         agent=q_agent,
-        num_episodes=100,
+        num_episodes=args.eval_episodes,
     )
     print_summary("Q-Learning Agent", q_summary)
 
@@ -119,6 +154,8 @@ def main() -> None:
     success_gain = q_summary["success_rate"] - random_summary["success_rate"]
 
     print("\n=== Comparison ===")
+    print(f"map_name: {args.map_name}")
+    print(f"eval_episodes: {args.eval_episodes}")
     print(f"reward improvement: {reward_gain:.2f}")
     print(f"step reduction: {step_delta:.2f}")
     print(f"cleaned ratio improvement: {cleaned_gain:.2%}")
