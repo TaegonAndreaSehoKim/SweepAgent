@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import sys
 from pathlib import Path
@@ -18,6 +19,32 @@ from agents.random_agent import RandomAgent
 from configs.map_presets import MAP_PRESETS
 from env.grid_clean_env import GridCleanEnv
 from utils.experiment_utils import build_env, load_or_train_q_agent
+
+
+def parse_args() -> argparse.Namespace:
+    # Parse command-line arguments for multi-map benchmarking.
+    parser = argparse.ArgumentParser(
+        description="Benchmark random and learned SweepAgent policies across map presets."
+    )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=1000,
+        help="Training episodes used only when a checkpoint does not already exist.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed used for checkpoint lookup, training, and random baseline evaluation.",
+    )
+    parser.add_argument(
+        "--eval-episodes",
+        type=int,
+        default=100,
+        help="Number of evaluation episodes per map and per agent.",
+    )
+    return parser.parse_args()
 
 
 def ensure_output_dirs() -> None:
@@ -173,8 +200,15 @@ def save_bar_plot(
 
 
 def main() -> None:
+    args = parse_args()
+
     # Benchmark both policies across all shared map presets.
     all_results: List[Dict[str, float | str]] = []
+
+    print("=== Benchmark Configuration ===")
+    print(f"training episodes: {args.episodes}")
+    print(f"seed: {args.seed}")
+    print(f"evaluation episodes: {args.eval_episodes}")
 
     for map_name in MAP_PRESETS:
         print("\n==============================")
@@ -182,11 +216,14 @@ def main() -> None:
         print("==============================")
 
         random_env = build_env(map_name=map_name)
-        random_agent = RandomAgent(action_space_size=len(random_env.ACTIONS), seed=42)
+        random_agent = RandomAgent(
+            action_space_size=len(random_env.ACTIONS),
+            seed=args.seed,
+        )
         random_result = evaluate_agent(
             env=random_env,
             agent=random_agent,
-            num_episodes=100,
+            num_episodes=args.eval_episodes,
         )
         print_summary(f"{map_name} Random Agent", random_result)
         all_results.append(
@@ -200,13 +237,13 @@ def main() -> None:
         learned_env = build_env(map_name=map_name)
         learned_agent = load_or_train_q_agent(
             map_name=map_name,
-            num_episodes=1000,
-            seed=42,
+            num_episodes=args.episodes,
+            seed=args.seed,
         )
         learned_result = evaluate_agent(
             env=learned_env,
             agent=learned_agent,
-            num_episodes=100,
+            num_episodes=args.eval_episodes,
         )
         print_summary(f"{map_name} Learned Greedy Agent", learned_result)
         all_results.append(
