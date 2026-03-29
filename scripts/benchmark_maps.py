@@ -44,6 +44,12 @@ def parse_args() -> argparse.Namespace:
         default=100,
         help="Number of evaluation episodes per map and per agent.",
     )
+    parser.add_argument(
+        "--maps",
+        nargs="+",
+        default=list(MAP_PRESETS.keys()),
+        help="One or more map preset names to benchmark (for example: default harder).",
+    )
     return parser.parse_args()
 
 
@@ -149,7 +155,7 @@ def save_bar_plot(
 ) -> Path:
     # Save a grouped bar chart for one benchmark metric.
     ensure_output_dirs()
-    map_names = list(MAP_PRESETS.keys())
+    map_names = [str(row["map_name"]) for row in results if row["agent_type"] == "random"]
 
     random_values = []
     learned_values = []
@@ -202,15 +208,24 @@ def save_bar_plot(
 def main() -> None:
     args = parse_args()
 
-    # Benchmark both policies across all shared map presets.
+    invalid_maps = [map_name for map_name in args.maps if map_name not in MAP_PRESETS]
+    if invalid_maps:
+        supported_maps = ", ".join(MAP_PRESETS.keys())
+        invalid_str = ", ".join(invalid_maps)
+        raise ValueError(
+            f"Unknown map name(s): {invalid_str}. Supported maps: {supported_maps}"
+        )
+
+    # Benchmark both policies across the selected map presets.
     all_results: List[Dict[str, float | str]] = []
 
     print("=== Benchmark Configuration ===")
     print(f"training episodes: {args.episodes}")
     print(f"seed: {args.seed}")
     print(f"evaluation episodes: {args.eval_episodes}")
+    print(f"maps: {', '.join(args.maps)}")
 
-    for map_name in MAP_PRESETS:
+    for map_name in args.maps:
         print("\n==============================")
         print(f"Running benchmark for map: {map_name}")
         print("==============================")
