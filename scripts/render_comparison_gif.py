@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         "--map-name",
         type=str,
         default="harder",
-        help="Map preset name (for example: default, harder, wide_room, corridor).",
+        help="Map preset name (for example: default, harder, wide_room, corridor, battery_harder).",
     )
     parser.add_argument(
         "--episodes",
@@ -81,6 +81,13 @@ def get_tile_color(env: GridCleanEnv, row: int, col: int) -> str:
         return "#b7e4c7" if is_cleaned else "#ffd166"
 
     return "#f8f9fa"
+
+
+def format_battery_text(env: GridCleanEnv) -> str:
+    # Return a readable battery label for titles.
+    if env.battery_capacity is None:
+        return "Battery: off"
+    return f"Battery: {env.battery_remaining}/{env.battery_capacity}"
 
 
 def draw_env_on_axis(
@@ -125,12 +132,14 @@ def draw_env_on_axis(
 
     cleaned_tiles = env._count_cleaned_tiles()
     total_dirty_tiles = env.total_dirty_tiles
+    battery_text = format_battery_text(env)
 
     ax.set_title(
         f"{panel_title}\n"
         f"Step: {step_idx} | "
         f"Reward: {total_reward:.0f} | "
-        f"Cleaned: {cleaned_tiles}/{total_dirty_tiles}",
+        f"Cleaned: {cleaned_tiles}/{total_dirty_tiles}\n"
+        f"{battery_text}",
         fontsize=11,
         pad=10,
     )
@@ -195,6 +204,7 @@ def rollout_random_episode(
             "total_reward": total_reward,
             "robot_pos": env.robot_pos,
             "cleaned_mask": env.cleaned_mask,
+            "battery_remaining": env.battery_remaining,
         }
     )
 
@@ -212,6 +222,7 @@ def rollout_random_episode(
                 "total_reward": total_reward,
                 "robot_pos": env.robot_pos,
                 "cleaned_mask": env.cleaned_mask,
+                "battery_remaining": env.battery_remaining,
             }
         )
 
@@ -235,6 +246,7 @@ def rollout_learned_episode(
             "total_reward": total_reward,
             "robot_pos": env.robot_pos,
             "cleaned_mask": env.cleaned_mask,
+            "battery_remaining": env.battery_remaining,
         }
     )
 
@@ -252,6 +264,7 @@ def rollout_learned_episode(
                 "total_reward": total_reward,
                 "robot_pos": env.robot_pos,
                 "cleaned_mask": env.cleaned_mask,
+                "battery_remaining": env.battery_remaining,
             }
         )
 
@@ -263,6 +276,7 @@ def apply_record(env: GridCleanEnv, record: Dict[str, object]) -> None:
     env.robot_pos = record["robot_pos"]  # type: ignore[assignment]
     env.cleaned_mask = int(record["cleaned_mask"])
     env.steps_taken = int(record["step_idx"])
+    env.battery_remaining = record["battery_remaining"]  # type: ignore[assignment]
 
 
 def build_comparison_frames(

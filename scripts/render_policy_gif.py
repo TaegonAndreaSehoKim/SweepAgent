@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
         "--map-name",
         type=str,
         default="harder",
-        help="Map preset name (for example: default, harder, wide_room, corridor).",
+        help="Map preset name (for example: default, harder, wide_room, corridor, battery_harder).",
     )
     parser.add_argument(
         "--episodes",
@@ -71,6 +71,13 @@ def get_tile_color(env: GridCleanEnv, row: int, col: int) -> str:
         return "#b7e4c7" if is_cleaned else "#ffd166"
 
     return "#f8f9fa"
+
+
+def format_battery_text(env: GridCleanEnv) -> str:
+    # Return a readable battery label for titles.
+    if env.battery_capacity is None:
+        return "Battery: off"
+    return f"Battery: {env.battery_remaining}/{env.battery_capacity}"
 
 
 def draw_frame(
@@ -118,12 +125,14 @@ def draw_frame(
 
     cleaned_tiles = env._count_cleaned_tiles()
     total_dirty_tiles = env.total_dirty_tiles
+    battery_text = format_battery_text(env)
 
     ax.set_title(
         f"{title}\n"
         f"Step: {step_idx} | "
         f"Reward: {total_reward:.0f} | "
-        f"Cleaned: {cleaned_tiles}/{total_dirty_tiles}",
+        f"Cleaned: {cleaned_tiles}/{total_dirty_tiles} | "
+        f"{battery_text}",
         fontsize=12,
         pad=16,
     )
