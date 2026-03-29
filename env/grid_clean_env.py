@@ -10,7 +10,7 @@ class StepResult:
     next_state: Tuple[int, int, int, int]
     reward: int
     done: bool
-    info: Dict[str, float]
+    info: Dict[str, float | str]
 
 
 class GridCleanEnv:
@@ -38,8 +38,9 @@ class GridCleanEnv:
         reward_invalid: int = -5,
         reward_finish: int = 50,
         battery_capacity: int | None = None,
+        first_recharge_reward: int = 1,
+        successful_recharge_completion_bonus: int = 10,
     ) -> None:
-        # Load a small default room if no custom map is provided.
         if grid_map is None:
             grid_map = [
                 "#######",
@@ -52,41 +53,40 @@ class GridCleanEnv:
         self.raw_map = grid_map
         self.max_steps = max_steps
 
-        # Store the reward configuration.
         self.reward_clean = reward_clean
         self.reward_move = reward_move
         self.reward_revisit = reward_revisit
         self.reward_invalid = reward_invalid
         self.reward_finish = reward_finish
 
-        # Optional battery constraint for harder environment settings.
         self.battery_capacity = battery_capacity
         self.battery_remaining = battery_capacity
 
-        # Build the internal grid representation.
         self.grid: List[List[str]] = [list(row) for row in grid_map]
         self.rows = len(self.grid)
         self.cols = len(self.grid[0])
 
-        # Find and clear the start tile in the static map.
         self.start_pos = self._find_start_pos()
         start_row, start_col = self.start_pos
         self.grid[start_row][start_col] = "."
 
-        # Index dirty tiles so their cleaned status can be tracked by bitmask.
+        self.charger_positions = self._find_charger_positions()
+
         self.dirty_positions = self._find_dirty_positions()
         self.dirty_index_map = {
             pos: idx for idx, pos in enumerate(self.dirty_positions)
         }
         self.total_dirty_tiles = len(self.dirty_positions)
 
-        # Initialize the dynamic episode state.
         self.robot_pos: Tuple[int, int] = self.start_pos
         self.cleaned_mask: int = 0
         self.steps_taken: int = 0
 
+        self.first_recharge_reward = first_recharge_reward
+        self.successful_recharge_completion_bonus = successful_recharge_completion_bonus
+        self.has_recharged_this_episode = False
+
     def _find_start_pos(self) -> Tuple[int, int]:
-        # Collect all start tiles and validate that there is exactly one.
         start_positions = []
         for r in range(self.rows):
             for c in range(self.cols):
@@ -99,7 +99,6 @@ class GridCleanEnv:
         return start_positions[0]
 
     def _find_dirty_positions(self) -> List[Tuple[int, int]]:
-        # Record every dirty tile in the map.
         dirty_positions = []
         for r in range(self.rows):
             for c in range(self.cols):
@@ -107,12 +106,18 @@ class GridCleanEnv:
                     dirty_positions.append((r, c))
         return dirty_positions
 
+    def _find_charger_positions(self) -> List[Tuple[int, int]]:
+        charger_positions = []
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if self.grid[r][c] == "C":
+                    charger_positions.append((r, c))
+        return charger_positions
+
     def _is_wall(self, row: int, col: int) -> bool:
-        # Check whether the target tile is blocked.
         return self.grid[row][col] == "#"
 
     def _is_dirty(self, row: int, col: int) -> bool:
-        # Return True only if the tile exists and has not been cleaned yet.
         pos = (row, col)
         if pos not in self.dirty_index_map:
             return False
@@ -120,33 +125,30 @@ class GridCleanEnv:
         idx = self.dirty_index_map[pos]
         return ((self.cleaned_mask >> idx) & 1) == 0
 
+    def _is_charger(self, row: int, col: int) -> bool:
+        return (row, col) in self.charger_positions
+
     def _clean_tile(self, row: int, col: int) -> None:
-        # Mark the tile as cleaned in the bitmask.
         pos = (row, col)
         if pos in self.dirty_index_map:
             idx = self.dirty_index_map[pos]
             self.cleaned_mask |= (1 << idx)
 
     def _count_cleaned_tiles(self) -> int:
-        # Count how many dirty tiles have been cleaned so far.
         return self.cleaned_mask.bit_count()
 
     def _all_cleaned(self) -> bool:
-        # Check whether the episode goal has been reached.
         return self._count_cleaned_tiles() == self.total_dirty_tiles
 
     def _battery_depleted(self) -> bool:
-        # Return True only when battery mode is enabled and no charge remains.
         return self.battery_remaining is not None and self.battery_remaining <= 0
 
     def _get_battery_state_value(self) -> int:
-        # Return a stable battery value for the agent state.
         if self.battery_remaining is None:
             return -1
         return self.battery_remaining
 
     def _get_state(self) -> Tuple[int, int, int, int]:
-        # Return the current environment state including battery information.
         row, col = self.robot_pos
         return (
             row,
@@ -156,21 +158,19 @@ class GridCleanEnv:
         )
 
     def reset(self) -> Tuple[int, int, int, int]:
-        # Reset the robot position, cleaning progress, step count, and battery.
         self.robot_pos = self.start_pos
         self.cleaned_mask = 0
         self.steps_taken = 0
         self.battery_remaining = self.battery_capacity
+        self.has_recharged_this_episode = False
         return self._get_state()
 
-    def step(self, action: int) -> Tuple[Tuple[int, int, int, int], int, bool, Dict[str, float]]:
-        # Reject invalid action ids early.
+    def step(self, action: int) -> Tuple[Tuple[int, int, int, int], int, bool, Dict[str, float | str]]:
         if action not in self.ACTIONS:
             raise ValueError(f"Invalid action: {action}")
 
         self.steps_taken += 1
 
-        # Spend one unit of battery per action when battery mode is enabled.
         if self.battery_remaining is not None:
             self.battery_remaining -= 1
 
@@ -180,14 +180,14 @@ class GridCleanEnv:
         next_col = current_col + dc
 
         reward = 0
+        recharged = False
+        termination_reason = "ongoing"
 
-        # Penalize invalid moves, otherwise update the robot state.
         if self._is_wall(next_row, next_col):
             reward += self.reward_invalid
         else:
             self.robot_pos = (next_row, next_col)
 
-            # Reward new cleaning, penalize dirty-tile revisits, or apply move cost.
             if self._is_dirty(next_row, next_col):
                 self._clean_tile(next_row, next_col)
                 reward += self.reward_clean
@@ -197,16 +197,28 @@ class GridCleanEnv:
                 else:
                     reward += self.reward_move
 
+            if self._is_charger(next_row, next_col) and self.battery_capacity is not None:
+                if self.battery_remaining < self.battery_capacity:
+                    if not self.has_recharged_this_episode:
+                        reward += self.first_recharge_reward
+                    self.battery_remaining = self.battery_capacity
+                    self.has_recharged_this_episode = True
+                    recharged = True
+
         done = False
 
-        # End when all tiles are cleaned, battery runs out, or step limit is reached.
         if self._all_cleaned():
             reward += self.reward_finish
+            if self.has_recharged_this_episode:
+                reward += self.successful_recharge_completion_bonus
             done = True
+            termination_reason = "all_cleaned"
         elif self._battery_depleted():
             done = True
+            termination_reason = "battery_depleted"
         elif self.steps_taken >= self.max_steps:
             done = True
+            termination_reason = "step_limit"
 
         info = {
             "steps_taken": self.steps_taken,
@@ -224,20 +236,22 @@ class GridCleanEnv:
                 self.battery_capacity if self.battery_capacity is not None else -1
             ),
             "battery_enabled": 1.0 if self.battery_capacity is not None else 0.0,
+            "recharged": 1.0 if recharged else 0.0,
+            "termination_reason": termination_reason,
         }
 
         return self._get_state(), reward, done, info
 
     def render(self) -> None:
-        # Copy the static map so the current episode state can be overlaid.
         display_grid = [row[:] for row in self.grid]
 
-        # Replace cleaned dirty tiles with normal floor tiles.
         for (r, c), idx in self.dirty_index_map.items():
             if ((self.cleaned_mask >> idx) & 1) == 1:
-                display_grid[r][c] = "."
+                if self._is_charger(r, c):
+                    display_grid[r][c] = "C"
+                else:
+                    display_grid[r][c] = "."
 
-        # Draw the robot on top of the room.
         robot_r, robot_c = self.robot_pos
         display_grid[robot_r][robot_c] = "R"
 
@@ -258,5 +272,4 @@ class GridCleanEnv:
             )
 
     def sample_action(self) -> int:
-        # Sample a random action from the environment action space.
         return random.choice(list(self.ACTIONS.keys()))
