@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 from pathlib import Path
 from statistics import mean
@@ -46,7 +47,18 @@ def parse_args() -> argparse.Namespace:
         default=100,
         help="Number of evaluation episodes for each agent.",
     )
+    parser.add_argument(
+        "--output-csv",
+        type=str,
+        default=None,
+        help="Optional CSV output path for saving the comparison summary.",
+    )
     return parser.parse_args()
+
+
+def ensure_output_dirs() -> None:
+    # Create output folders used by comparison logs.
+    (PROJECT_ROOT / "outputs" / "logs").mkdir(parents=True, exist_ok=True)
 
 
 def run_episode(
@@ -116,6 +128,42 @@ def print_summary(title: str, summary: Dict[str, float]) -> None:
     print(f"success rate: {summary['success_rate']:.2%}")
 
 
+def save_comparison_csv(output_csv: str, row: Dict[str, float | int | str]) -> Path:
+    # Save one comparison summary row to a CSV file.
+    ensure_output_dirs()
+    output_path = Path(output_csv)
+    if not output_path.is_absolute():
+        output_path = PROJECT_ROOT / output_path
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "map_name",
+        "seed",
+        "training_episodes",
+        "eval_episodes",
+        "random_average_reward",
+        "random_average_steps",
+        "random_average_cleaned_ratio",
+        "random_success_rate",
+        "q_average_reward",
+        "q_average_steps",
+        "q_average_cleaned_ratio",
+        "q_success_rate",
+        "reward_improvement",
+        "step_reduction",
+        "cleaned_ratio_improvement",
+        "success_rate_improvement",
+    ]
+
+    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(row)
+
+    return output_path
+
+
 def main() -> None:
     args = parse_args()
 
@@ -160,6 +208,28 @@ def main() -> None:
     print(f"step reduction: {step_delta:.2f}")
     print(f"cleaned ratio improvement: {cleaned_gain:.2%}")
     print(f"success rate improvement: {success_gain:.2%}")
+
+    if args.output_csv:
+        row = {
+            "map_name": args.map_name,
+            "seed": args.seed,
+            "training_episodes": args.episodes,
+            "eval_episodes": args.eval_episodes,
+            "random_average_reward": random_summary["average_reward"],
+            "random_average_steps": random_summary["average_steps"],
+            "random_average_cleaned_ratio": random_summary["average_cleaned_ratio"],
+            "random_success_rate": random_summary["success_rate"],
+            "q_average_reward": q_summary["average_reward"],
+            "q_average_steps": q_summary["average_steps"],
+            "q_average_cleaned_ratio": q_summary["average_cleaned_ratio"],
+            "q_success_rate": q_summary["success_rate"],
+            "reward_improvement": reward_gain,
+            "step_reduction": step_delta,
+            "cleaned_ratio_improvement": cleaned_gain,
+            "success_rate_improvement": success_gain,
+        }
+        saved_path = save_comparison_csv(args.output_csv, row)
+        print(f"Saved comparison CSV to: {saved_path}")
 
 
 if __name__ == "__main__":
