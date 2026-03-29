@@ -44,6 +44,7 @@ def build_env(map_name: str = "default") -> GridCleanEnv:
         reward_revisit=REWARD_REVISIT,
         reward_invalid=REWARD_INVALID,
         reward_finish=REWARD_FINISH,
+        battery_capacity=preset.get("battery_capacity"),
     )
 
 

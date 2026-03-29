@@ -15,10 +15,10 @@ class StepResult:
 
 class GridCleanEnv:
     ACTIONS = {
-        0: (-1, 0),  # up
-        1: (1, 0),   # down
-        2: (0, -1),  # left
-        3: (0, 1),   # right
+        0: (-1, 0),   # up
+        1: (1, 0),    # down
+        2: (0, -1),   # left
+        3: (0, 1),    # right
     }
 
     ACTION_NAMES = {
@@ -37,6 +37,7 @@ class GridCleanEnv:
         reward_revisit: int = -2,
         reward_invalid: int = -5,
         reward_finish: int = 50,
+        battery_capacity: int | None = None,
     ) -> None:
         # Load a small default room if no custom map is provided.
         if grid_map is None:
@@ -57,6 +58,10 @@ class GridCleanEnv:
         self.reward_revisit = reward_revisit
         self.reward_invalid = reward_invalid
         self.reward_finish = reward_finish
+
+        # Optional battery constraint for harder environment settings.
+        self.battery_capacity = battery_capacity
+        self.battery_remaining = battery_capacity
 
         # Build the internal grid representation.
         self.grid: List[List[str]] = [list(row) for row in grid_map]
@@ -130,16 +135,21 @@ class GridCleanEnv:
         # Check whether the episode goal has been reached.
         return self._count_cleaned_tiles() == self.total_dirty_tiles
 
+    def _battery_depleted(self) -> bool:
+        # Return True only when battery mode is enabled and no charge remains.
+        return self.battery_remaining is not None and self.battery_remaining <= 0
+
     def _get_state(self) -> Tuple[int, int, int]:
-        # Encode the current state as position plus cleaned bitmask.
+        # Keep the original state format for compatibility with current agents.
         row, col = self.robot_pos
         return (row, col, self.cleaned_mask)
 
     def reset(self) -> Tuple[int, int, int]:
-        # Reset the robot position and cleaning progress for a new episode.
+        # Reset the robot position, cleaning progress, step count, and battery.
         self.robot_pos = self.start_pos
         self.cleaned_mask = 0
         self.steps_taken = 0
+        self.battery_remaining = self.battery_capacity
         return self._get_state()
 
     def step(self, action: int) -> Tuple[Tuple[int, int, int], int, bool, Dict[str, float]]:
@@ -149,7 +159,10 @@ class GridCleanEnv:
 
         self.steps_taken += 1
 
-        # Compute the candidate next position.
+        # Spend one unit of battery per action when battery mode is enabled.
+        if self.battery_remaining is not None:
+            self.battery_remaining -= 1
+
         current_row, current_col = self.robot_pos
         dr, dc = self.ACTIONS[action]
         next_row = current_row + dr
@@ -163,7 +176,7 @@ class GridCleanEnv:
         else:
             self.robot_pos = (next_row, next_col)
 
-            # Reward new cleaning, penalize revisits, or apply move cost.
+            # Reward new cleaning, penalize dirty-tile revisits, or apply move cost.
             if self._is_dirty(next_row, next_col):
                 self._clean_tile(next_row, next_col)
                 reward += self.reward_clean
@@ -174,14 +187,16 @@ class GridCleanEnv:
                     reward += self.reward_move
 
         done = False
-        # End the episode when all tiles are cleaned or the step limit is reached.
+
+        # End when all tiles are cleaned, battery runs out, or step limit is reached.
         if self._all_cleaned():
             reward += self.reward_finish
+            done = True
+        elif self._battery_depleted():
             done = True
         elif self.steps_taken >= self.max_steps:
             done = True
 
-        # Return extra metrics for logging and evaluation.
         info = {
             "steps_taken": self.steps_taken,
             "cleaned_tiles": self._count_cleaned_tiles(),
@@ -191,6 +206,13 @@ class GridCleanEnv:
                 if self.total_dirty_tiles > 0
                 else 1.0
             ),
+            "battery_remaining": (
+                self.battery_remaining if self.battery_remaining is not None else -1
+            ),
+            "battery_capacity": (
+                self.battery_capacity if self.battery_capacity is not None else -1
+            ),
+            "battery_enabled": 1.0 if self.battery_capacity is not None else 0.0,
         }
 
         return self._get_state(), reward, done, info
@@ -211,10 +233,18 @@ class GridCleanEnv:
         print()
         for row in display_grid:
             print("".join(row))
-        print(
-            f"steps={self.steps_taken} | "
-            f"cleaned={self._count_cleaned_tiles()}/{self.total_dirty_tiles}"
-        )
+
+        if self.battery_capacity is None:
+            print(
+                f"steps={self.steps_taken} | "
+                f"cleaned={self._count_cleaned_tiles()}/{self.total_dirty_tiles}"
+            )
+        else:
+            print(
+                f"steps={self.steps_taken} | "
+                f"cleaned={self._count_cleaned_tiles()}/{self.total_dirty_tiles} | "
+                f"battery={self.battery_remaining}/{self.battery_capacity}"
+            )
 
     def sample_action(self) -> int:
         # Sample a random action from the environment action space.
