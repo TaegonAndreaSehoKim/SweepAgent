@@ -13,36 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from agents.q_learning_agent import QLearningAgent
 from agents.random_agent import RandomAgent
 from env.grid_clean_env import GridCleanEnv
-from scripts.train_q_learning import train_q_learning
-
-
-def get_checkpoint_path(seed: int) -> Path:
-    # Build the expected checkpoint path for a given training seed.
-    return (
-        PROJECT_ROOT
-        / "outputs"
-        / "checkpoints"
-        / f"q_learning_agent_seed_{seed}.json"
-    )
-
-
-def load_or_train_q_agent(
-    seed: int = 42,
-    num_episodes: int = 1000,
-) -> QLearningAgent:
-    # Reuse an existing checkpoint when available; otherwise train a new one.
-    checkpoint_path = get_checkpoint_path(seed=seed)
-
-    if checkpoint_path.exists():
-        print(f"Loading trained Q-learning agent from {checkpoint_path.relative_to(PROJECT_ROOT)}")
-        return QLearningAgent.load(checkpoint_path)
-
-    print("No checkpoint found. Training Q-learning agent...")
-    return train_q_learning(
-        num_episodes=num_episodes,
-        seed=seed,
-        print_every=100,
-    )
+from utils.experiment_utils import build_env, load_or_train_q_agent
 
 
 def run_episode(
@@ -113,8 +84,8 @@ def print_summary(title: str, summary: Dict[str, float]) -> None:
 
 
 def main() -> None:
-    # Evaluate the random baseline first.
-    env = GridCleanEnv()
+    # Use the shared default environment preset.
+    env = build_env(map_name="default")
 
     print("Evaluating random baseline...")
     random_agent = RandomAgent(action_space_size=len(env.ACTIONS), seed=42)
@@ -125,9 +96,12 @@ def main() -> None:
     )
     print_summary("Random Agent", random_summary)
 
-    # Load a saved Q-learning agent or train one if needed.
     print("\nPreparing Q-learning agent...")
-    q_agent = load_or_train_q_agent(seed=42, num_episodes=1000)
+    q_agent = load_or_train_q_agent(
+        map_name="default",
+        num_episodes=1000,
+        seed=42,
+    )
 
     print("\nEvaluating Q-learning agent...")
     q_summary = evaluate_agent(
@@ -137,10 +111,11 @@ def main() -> None:
     )
     print_summary("Q-Learning Agent", q_summary)
 
-    # Print a simple comparison section.
     reward_gain = q_summary["average_reward"] - random_summary["average_reward"]
     step_delta = random_summary["average_steps"] - q_summary["average_steps"]
-    cleaned_gain = q_summary["average_cleaned_ratio"] - random_summary["average_cleaned_ratio"]
+    cleaned_gain = (
+        q_summary["average_cleaned_ratio"] - random_summary["average_cleaned_ratio"]
+    )
     success_gain = q_summary["success_rate"] - random_summary["success_rate"]
 
     print("\n=== Comparison ===")
