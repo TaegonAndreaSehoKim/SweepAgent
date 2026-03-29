@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 from statistics import mean
@@ -22,6 +23,38 @@ def ensure_output_dirs() -> None:
     (PROJECT_ROOT / "outputs" / "plots").mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "outputs" / "logs").mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "outputs" / "checkpoints").mkdir(parents=True, exist_ok=True)
+
+
+def parse_args() -> argparse.Namespace:
+    # Parse command-line arguments for training configuration.
+    parser = argparse.ArgumentParser(
+        description="Train a Q-learning SweepAgent on a selected map preset."
+    )
+    parser.add_argument(
+        "--map-name",
+        type=str,
+        default="default",
+        help="Map preset name (for example: default, harder, wide_room, corridor).",
+    )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=1000,
+        help="Number of training episodes.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed used for the Q-learning agent.",
+    )
+    parser.add_argument(
+        "--print-every",
+        type=int,
+        default=100,
+        help="Print rolling training metrics every N episodes.",
+    )
+    return parser.parse_args()
 
 
 def run_training_episode(
@@ -264,9 +297,10 @@ def train_q_learning(
 
 
 if __name__ == "__main__":
+    args = parse_args()
     train_q_learning(
-        map_name="default",
-        num_episodes=1000,
-        seed=42,
-        print_every=100,
+        map_name=args.map_name,
+        num_episodes=args.episodes,
+        seed=args.seed,
+        print_every=args.print_every,
     )
