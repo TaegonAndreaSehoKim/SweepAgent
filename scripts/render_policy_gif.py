@@ -64,6 +64,16 @@ def build_env(map_name: str) -> GridCleanEnv:
     )
 
 
+def get_checkpoint_path(map_name: str, seed: int) -> Path:
+    # Keep separate checkpoints for each map so policies are not mixed.
+    return (
+        PROJECT_ROOT
+        / "outputs"
+        / "checkpoints"
+        / f"q_learning_agent_{map_name}_seed_{seed}.json"
+    )
+
+
 def train_q_learning_agent(
     env: GridCleanEnv,
     num_episodes: int = TRAIN_EPISODES,
@@ -116,6 +126,37 @@ def train_q_learning_agent(
                 f"cleaned_ratio={final_info['cleaned_ratio']:.2%} | "
                 f"epsilon={agent.epsilon:.4f}"
             )
+
+    return agent
+
+
+def load_or_train_q_agent(
+    map_name: str,
+    num_episodes: int = TRAIN_EPISODES,
+    seed: int = TRAIN_SEED,
+) -> QLearningAgent:
+    # Reuse an existing checkpoint for the selected map when available.
+    checkpoint_path = get_checkpoint_path(map_name=map_name, seed=seed)
+
+    if checkpoint_path.exists():
+        print(
+            "Loading trained Q-learning agent from "
+            f"{checkpoint_path.relative_to(PROJECT_ROOT)}"
+        )
+        return QLearningAgent.load(checkpoint_path)
+
+    print(f"No checkpoint found for map='{map_name}'. Training Q-learning agent...")
+    train_env = build_env(map_name=map_name)
+    agent = train_q_learning_agent(
+        env=train_env,
+        num_episodes=num_episodes,
+        seed=seed,
+        print_every=PRINT_EVERY,
+    )
+
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    agent.save(checkpoint_path)
+    print(f"Saved checkpoint to: {checkpoint_path.relative_to(PROJECT_ROOT)}")
 
     return agent
 
@@ -212,7 +253,14 @@ def collect_greedy_episode_frames(
     total_reward = 0.0
     step_idx = 0
 
-    frames.append(draw_frame(env=env, step_idx=step_idx, total_reward=total_reward, title=title))
+    frames.append(
+        draw_frame(
+            env=env,
+            step_idx=step_idx,
+            total_reward=total_reward,
+            title=title,
+        )
+    )
 
     while not done:
         action = agent.get_policy_action(state)
@@ -234,7 +282,11 @@ def collect_greedy_episode_frames(
     return frames
 
 
-def save_gif(frames: List[np.ndarray], output_path: Path, frame_duration: float = 0.7) -> None:
+def save_gif(
+    frames: List[np.ndarray],
+    output_path: Path,
+    frame_duration: float = 0.7,
+) -> None:
     # Save the captured frames as a GIF file.
     output_path.parent.mkdir(parents=True, exist_ok=True)
     imageio.mimsave(output_path, frames, duration=frame_duration, loop=0)
@@ -246,16 +298,13 @@ def render_policy_gif(
     seed: int = TRAIN_SEED,
     frame_duration: float = 0.7,
 ) -> Path:
-    # Train the agent and render one greedy episode to a GIF.
-    train_env = build_env(map_name=map_name)
+    # Load or train the agent, then render one greedy episode to a GIF.
     render_env = build_env(map_name=map_name)
 
-    print(f"Training Q-learning agent on the '{map_name}' map...")
-    agent = train_q_learning_agent(
-        env=train_env,
+    agent = load_or_train_q_agent(
+        map_name=map_name,
         num_episodes=num_episodes,
         seed=seed,
-        print_every=PRINT_EVERY,
     )
 
     print("Collecting frames from the learned greedy policy...")
