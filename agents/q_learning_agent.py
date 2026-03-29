@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-State = Tuple[int, int, int]
+State = Tuple[int, int, int, int]
 
 
 class QLearningAgent:
@@ -46,13 +46,22 @@ class QLearningAgent:
 
     def _state_to_key(self, state: State) -> str:
         # Convert a tuple state into a JSON-safe string key.
-        row, col, cleaned_mask = state
-        return f"{row},{col},{cleaned_mask}"
+        return ",".join(str(value) for value in state)
 
     def _key_to_state(self, key: str) -> State:
         # Convert a JSON string key back into a tuple state.
-        row, col, cleaned_mask = key.split(",")
-        return (int(row), int(col), int(cleaned_mask))
+        parts = [int(value) for value in key.split(",")]
+
+        # Backward compatibility for older checkpoints that used 3-part states.
+        if len(parts) == 3:
+            row, col, cleaned_mask = parts
+            return (row, col, cleaned_mask, -1)
+
+        if len(parts) == 4:
+            row, col, cleaned_mask, battery_value = parts
+            return (row, col, cleaned_mask, battery_value)
+
+        raise ValueError(f"Unexpected serialized state format: {key}")
 
     def get_q_values(self, state: State) -> List[float]:
         # Return the Q-values for the given state.

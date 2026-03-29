@@ -7,7 +7,7 @@ from typing import Dict, List, Tuple
 
 @dataclass
 class StepResult:
-    next_state: Tuple[int, int, int]
+    next_state: Tuple[int, int, int, int]
     reward: int
     done: bool
     info: Dict[str, float]
@@ -139,12 +139,23 @@ class GridCleanEnv:
         # Return True only when battery mode is enabled and no charge remains.
         return self.battery_remaining is not None and self.battery_remaining <= 0
 
-    def _get_state(self) -> Tuple[int, int, int]:
-        # Keep the original state format for compatibility with current agents.
-        row, col = self.robot_pos
-        return (row, col, self.cleaned_mask)
+    def _get_battery_state_value(self) -> int:
+        # Return a stable battery value for the agent state.
+        if self.battery_remaining is None:
+            return -1
+        return self.battery_remaining
 
-    def reset(self) -> Tuple[int, int, int]:
+    def _get_state(self) -> Tuple[int, int, int, int]:
+        # Return the current environment state including battery information.
+        row, col = self.robot_pos
+        return (
+            row,
+            col,
+            self.cleaned_mask,
+            self._get_battery_state_value(),
+        )
+
+    def reset(self) -> Tuple[int, int, int, int]:
         # Reset the robot position, cleaning progress, step count, and battery.
         self.robot_pos = self.start_pos
         self.cleaned_mask = 0
@@ -152,7 +163,7 @@ class GridCleanEnv:
         self.battery_remaining = self.battery_capacity
         return self._get_state()
 
-    def step(self, action: int) -> Tuple[Tuple[int, int, int], int, bool, Dict[str, float]]:
+    def step(self, action: int) -> Tuple[Tuple[int, int, int, int], int, bool, Dict[str, float]]:
         # Reject invalid action ids early.
         if action not in self.ACTIONS:
             raise ValueError(f"Invalid action: {action}")
