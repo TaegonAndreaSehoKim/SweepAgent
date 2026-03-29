@@ -68,6 +68,16 @@ def build_env(map_name: str) -> GridCleanEnv:
     )
 
 
+def get_checkpoint_path(map_name: str, seed: int) -> Path:
+    # Keep separate checkpoints for each map so policies are not mixed.
+    return (
+        PROJECT_ROOT
+        / "outputs"
+        / "checkpoints"
+        / f"q_learning_agent_{map_name}_seed_{seed}.json"
+    )
+
+
 def train_q_learning_agent(
     env: GridCleanEnv,
     num_episodes: int = TRAIN_EPISODES,
@@ -120,6 +130,37 @@ def train_q_learning_agent(
                 f"cleaned_ratio={final_info['cleaned_ratio']:.2%} | "
                 f"epsilon={agent.epsilon:.4f}"
             )
+
+    return agent
+
+
+def load_or_train_q_agent(
+    map_name: str,
+    num_episodes: int = TRAIN_EPISODES,
+    seed: int = TRAIN_SEED,
+) -> QLearningAgent:
+    # Reuse an existing checkpoint for the selected map when available.
+    checkpoint_path = get_checkpoint_path(map_name=map_name, seed=seed)
+
+    if checkpoint_path.exists():
+        print(
+            "Loading trained Q-learning agent from "
+            f"{checkpoint_path.relative_to(PROJECT_ROOT)}"
+        )
+        return QLearningAgent.load(checkpoint_path)
+
+    print(f"No checkpoint found for map='{map_name}'. Training Q-learning agent...")
+    train_env = build_env(map_name=map_name)
+    agent = train_q_learning_agent(
+        env=train_env,
+        num_episodes=num_episodes,
+        seed=seed,
+        print_every=PRINT_EVERY,
+    )
+
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    agent.save(checkpoint_path)
+    print(f"Saved checkpoint to: {checkpoint_path.relative_to(PROJECT_ROOT)}")
 
     return agent
 
@@ -377,17 +418,14 @@ def render_comparison_gif(
     random_seed: int = 42,
     frame_duration: float = 0.6,
 ) -> Path:
-    # Train the learned agent, run both policies, and save a comparison GIF.
-    train_env = build_env(map_name=map_name)
+    # Load or train the learned agent, run both policies, and save a comparison GIF.
     learned_rollout_env = build_env(map_name=map_name)
     random_rollout_env = build_env(map_name=map_name)
 
-    print(f"Training Q-learning agent on the '{map_name}' map...")
-    learned_agent = train_q_learning_agent(
-        env=train_env,
+    learned_agent = load_or_train_q_agent(
+        map_name=map_name,
         num_episodes=num_episodes,
         seed=train_seed,
-        print_every=PRINT_EVERY,
     )
 
     print("Collecting random episode...")
