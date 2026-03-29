@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agents.q_learning_agent import QLearningAgent
 from env.grid_clean_env import GridCleanEnv
+from utils.experiment_utils import build_env, get_checkpoint_path
 
 
 def ensure_output_dirs() -> None:
@@ -21,16 +22,6 @@ def ensure_output_dirs() -> None:
     (PROJECT_ROOT / "outputs" / "plots").mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "outputs" / "logs").mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "outputs" / "checkpoints").mkdir(parents=True, exist_ok=True)
-
-
-def get_checkpoint_path(seed: int) -> Path:
-    # Build a stable checkpoint path based on the training seed.
-    return (
-        PROJECT_ROOT
-        / "outputs"
-        / "checkpoints"
-        / f"q_learning_agent_seed_{seed}.json"
-    )
 
 
 def run_training_episode(
@@ -106,7 +97,6 @@ def run_greedy_episode(
             print(f"reward={reward}")
             env.render()
 
-    # Package the greedy episode result for easy inspection.
     result = {
         "total_reward": total_reward,
         "steps_taken": final_info["steps_taken"],
@@ -141,70 +131,69 @@ def save_training_plots(
     cleaned_ratios: List[float],
     success_rates: List[float],
     epsilons: List[float],
+    map_name: str,
 ) -> None:
     # Create output folders before saving figures.
     ensure_output_dirs()
 
-    # Smooth each metric so overall trends are easier to read.
     reward_ma = moving_average(rewards, window_size=50)
     cleaned_ma = moving_average(cleaned_ratios, window_size=50)
     success_ma = moving_average(success_rates, window_size=50)
 
-    # Plot raw and smoothed training reward.
     plt.figure(figsize=(10, 5))
     plt.plot(rewards, label="episode reward")
     plt.plot(reward_ma, label="reward (moving average 50)")
     plt.xlabel("Episode")
     plt.ylabel("Total Reward")
-    plt.title("Q-Learning Training Reward")
+    plt.title(f"Q-Learning Training Reward ({map_name} map)")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / "training_reward.png")
+    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / f"training_reward_{map_name}.png")
     plt.close()
 
-    # Plot raw and smoothed cleaned ratio.
     plt.figure(figsize=(10, 5))
     plt.plot(cleaned_ratios, label="episode cleaned ratio")
     plt.plot(cleaned_ma, label="cleaned ratio (moving average 50)")
     plt.xlabel("Episode")
     plt.ylabel("Cleaned Ratio")
-    plt.title("Q-Learning Cleaning Performance")
+    plt.title(f"Q-Learning Cleaning Performance ({map_name} map)")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / "training_cleaned_ratio.png")
+    plt.savefig(
+        PROJECT_ROOT / "outputs" / "plots" / f"training_cleaned_ratio_{map_name}.png"
+    )
     plt.close()
 
-    # Plot raw and smoothed success trend.
     plt.figure(figsize=(10, 5))
     plt.plot(success_rates, label="episode success")
     plt.plot(success_ma, label="success rate (moving average 50)")
     plt.xlabel("Episode")
     plt.ylabel("Success")
-    plt.title("Q-Learning Success Trend")
+    plt.title(f"Q-Learning Success Trend ({map_name} map)")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / "training_success.png")
+    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / f"training_success_{map_name}.png")
     plt.close()
 
-    # Plot epsilon decay across training.
     plt.figure(figsize=(10, 5))
     plt.plot(epsilons, label="epsilon")
     plt.xlabel("Episode")
     plt.ylabel("Epsilon")
-    plt.title("Exploration Decay")
+    plt.title(f"Exploration Decay ({map_name} map)")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / "training_epsilon.png")
+    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / f"training_epsilon_{map_name}.png")
     plt.close()
 
 
 def train_q_learning(
+    map_name: str = "default",
     num_episodes: int = 1000,
     seed: int = 42,
     print_every: int = 100,
 ) -> QLearningAgent:
-    # Build the environment and the Q-learning agent.
-    env = GridCleanEnv()
+    # Build the shared environment preset and initialize the agent.
+    env = build_env(map_name=map_name)
     agent = QLearningAgent(
         action_space_size=len(env.ACTIONS),
         learning_rate=0.1,
@@ -215,7 +204,6 @@ def train_q_learning(
         seed=seed,
     )
 
-    # Store per-episode metrics for reporting and plotting.
     rewards: List[float] = []
     cleaned_ratios: List[float] = []
     success_rates: List[float] = []
@@ -229,7 +217,6 @@ def train_q_learning(
         success_rates.append(result["success"])
         epsilons.append(result["epsilon"])
 
-        # Print a rolling summary at a fixed interval.
         if episode % print_every == 0:
             recent_rewards = rewards[-print_every:]
             recent_cleaned = cleaned_ratios[-print_every:]
@@ -243,19 +230,20 @@ def train_q_learning(
                 f"epsilon={agent.epsilon:.4f}"
             )
 
-    # Save plots after training finishes.
     save_training_plots(
         rewards=rewards,
         cleaned_ratios=cleaned_ratios,
         success_rates=success_rates,
         epsilons=epsilons,
+        map_name=map_name,
     )
 
-    # Save the trained agent checkpoint.
-    checkpoint_path = get_checkpoint_path(seed=seed)
+    checkpoint_path = get_checkpoint_path(map_name=map_name, seed=seed)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     agent.save(checkpoint_path)
 
     print("\n=== Final Training Summary ===")
+    print(f"map_name: {map_name}")
     print(f"episodes: {num_episodes}")
     print(f"final epsilon: {agent.epsilon:.4f}")
     print(f"q_table states learned: {len(agent.q_table)}")
@@ -264,17 +252,21 @@ def train_q_learning(
     print(f"last 100 success rate: {mean(success_rates[-100:]):.2%}")
     print(f"checkpoint saved to: {checkpoint_path.relative_to(PROJECT_ROOT)}")
 
-    # Render one final greedy episode to inspect the learned behavior.
     run_greedy_episode(env=env, agent=agent, render=True)
 
     print("\nSaved plots:")
-    print("outputs/plots/training_reward.png")
-    print("outputs/plots/training_cleaned_ratio.png")
-    print("outputs/plots/training_success.png")
-    print("outputs/plots/training_epsilon.png")
+    print(f"outputs/plots/training_reward_{map_name}.png")
+    print(f"outputs/plots/training_cleaned_ratio_{map_name}.png")
+    print(f"outputs/plots/training_success_{map_name}.png")
+    print(f"outputs/plots/training_epsilon_{map_name}.png")
 
     return agent
 
 
 if __name__ == "__main__":
-    train_q_learning(num_episodes=1000, seed=42, print_every=100)
+    train_q_learning(
+        map_name="default",
+        num_episodes=1000,
+        seed=42,
+        print_every=100,
+    )
