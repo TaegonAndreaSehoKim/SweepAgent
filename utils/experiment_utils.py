@@ -47,6 +47,27 @@ def build_env(map_name: str = "default") -> GridCleanEnv:
     )
 
 
+def build_q_learning_agent(
+    action_space_size: int,
+    seed: int = TRAIN_SEED,
+    learning_rate: float = LEARNING_RATE,
+    discount_factor: float = DISCOUNT_FACTOR,
+    epsilon_start: float = EPSILON_START,
+    epsilon_decay: float = EPSILON_DECAY,
+    epsilon_min: float = EPSILON_MIN,
+) -> QLearningAgent:
+    # Build a Q-learning agent using the shared default hyperparameters.
+    return QLearningAgent(
+        action_space_size=action_space_size,
+        learning_rate=learning_rate,
+        discount_factor=discount_factor,
+        epsilon=epsilon_start,
+        epsilon_decay=epsilon_decay,
+        epsilon_min=epsilon_min,
+        seed=seed,
+    )
+
+
 def get_checkpoint_path(map_name: str, seed: int) -> Path:
     # Use a map-specific checkpoint name so policies do not get mixed.
     return (
@@ -74,13 +95,8 @@ def train_q_learning_agent(
     print_every: int = PRINT_EVERY,
 ) -> QLearningAgent:
     # Train a Q-learning agent on the provided environment.
-    agent = QLearningAgent(
+    agent = build_q_learning_agent(
         action_space_size=len(env.ACTIONS),
-        learning_rate=LEARNING_RATE,
-        discount_factor=DISCOUNT_FACTOR,
-        epsilon=EPSILON_START,
-        epsilon_decay=EPSILON_DECAY,
-        epsilon_min=EPSILON_MIN,
         seed=seed,
     )
 
