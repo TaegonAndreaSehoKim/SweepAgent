@@ -7,274 +7,148 @@ from typing import Dict, List
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
-    # Add the project root so local modules can be imported from the script.
+    # Add the project root so local modules can be imported when run as a script.
     sys.path.append(str(PROJECT_ROOT))
 
 from agents.q_learning_agent import QLearningAgent
 from agents.random_agent import RandomAgent
-from configs.default_config import (
-    DEFAULT_GRID_MAP,
-    DEFAULT_MAX_STEPS,
-    DISCOUNT_FACTOR,
-    EPSILON_DECAY,
-    EPSILON_MIN,
-    EPSILON_START,
-    LEARNING_RATE,
-    PRINT_EVERY,
-    REWARD_CLEAN,
-    REWARD_FINISH,
-    REWARD_INVALID,
-    REWARD_MOVE,
-    REWARD_REVISIT,
-    TRAIN_EPISODES,
-    TRAIN_SEED,
-)
 from env.grid_clean_env import GridCleanEnv
+from scripts.train_q_learning import train_q_learning
 
 
-def build_default_env() -> GridCleanEnv:
-    # Build the default experiment environment from shared config values.
-    return GridCleanEnv(
-        grid_map=DEFAULT_GRID_MAP,
-        max_steps=DEFAULT_MAX_STEPS,
-        reward_clean=REWARD_CLEAN,
-        reward_move=REWARD_MOVE,
-        reward_revisit=REWARD_REVISIT,
-        reward_invalid=REWARD_INVALID,
-        reward_finish=REWARD_FINISH,
+def get_checkpoint_path(seed: int) -> Path:
+    # Build the expected checkpoint path for a given training seed.
+    return (
+        PROJECT_ROOT
+        / "outputs"
+        / "checkpoints"
+        / f"q_learning_agent_seed_{seed}.json"
     )
 
 
-def evaluate_random_agent(
-    env: GridCleanEnv,
-    num_episodes: int = 100,
+def load_or_train_q_agent(
     seed: int = 42,
-) -> Dict[str, float]:
-    # Evaluate the random baseline on the given environment.
-    agent = RandomAgent(action_space_size=len(env.ACTIONS), seed=seed)
-    episode_results: List[Dict[str, float]] = []
-
-    for _ in range(num_episodes):
-        state = env.reset()
-        done = False
-        total_reward = 0
-        final_info: Dict[str, float] = {}
-
-        while not done:
-            action = agent.select_action(state)
-            next_state, reward, done, info = env.step(action)
-
-            total_reward += reward
-            state = next_state
-            final_info = info
-
-        episode_results.append(
-            {
-                "total_reward": total_reward,
-                "steps_taken": final_info["steps_taken"],
-                "cleaned_ratio": final_info["cleaned_ratio"],
-                "success": 1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0,
-            }
-        )
-
-    return {
-        "avg_reward": mean(result["total_reward"] for result in episode_results),
-        "avg_steps": mean(result["steps_taken"] for result in episode_results),
-        "avg_cleaned_ratio": mean(
-            result["cleaned_ratio"] for result in episode_results
-        ),
-        "success_rate": mean(result["success"] for result in episode_results),
-    }
-
-
-def train_q_learning_agent(
-    env: GridCleanEnv,
-    num_episodes: int = TRAIN_EPISODES,
-    seed: int = TRAIN_SEED,
-    print_every: int = PRINT_EVERY,
+    num_episodes: int = 1000,
 ) -> QLearningAgent:
-    # Train a Q-learning agent on the given environment.
-    agent = QLearningAgent(
-        action_space_size=len(env.ACTIONS),
-        learning_rate=LEARNING_RATE,
-        discount_factor=DISCOUNT_FACTOR,
-        epsilon=EPSILON_START,
-        epsilon_decay=EPSILON_DECAY,
-        epsilon_min=EPSILON_MIN,
+    # Reuse an existing checkpoint when available; otherwise train a new one.
+    checkpoint_path = get_checkpoint_path(seed=seed)
+
+    if checkpoint_path.exists():
+        print(f"Loading trained Q-learning agent from {checkpoint_path.relative_to(PROJECT_ROOT)}")
+        return QLearningAgent.load(checkpoint_path)
+
+    print("No checkpoint found. Training Q-learning agent...")
+    return train_q_learning(
+        num_episodes=num_episodes,
         seed=seed,
+        print_every=100,
     )
 
-    rewards: List[float] = []
-    cleaned_ratios: List[float] = []
-    success_rates: List[float] = []
 
-    for episode in range(1, num_episodes + 1):
-        state = env.reset()
-        done = False
-        total_reward = 0
-        final_info: Dict[str, float] = {}
-
-        while not done:
-            action = agent.select_action(state, training=True)
-            next_state, reward, done, info = env.step(action)
-
-            agent.update(
-                state=state,
-                action=action,
-                reward=reward,
-                next_state=next_state,
-                done=done,
-            )
-
-            total_reward += reward
-            state = next_state
-            final_info = info
-
-        agent.decay_epsilon()
-
-        rewards.append(total_reward)
-        cleaned_ratios.append(final_info["cleaned_ratio"])
-        success_rates.append(1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0)
-
-        if episode % print_every == 0:
-            print(
-                f"Episode {episode}/{num_episodes} | "
-                f"avg_reward={mean(rewards[-print_every:]):.2f} | "
-                f"avg_cleaned_ratio={mean(cleaned_ratios[-print_every:]):.2%} | "
-                f"success_rate={mean(success_rates[-print_every:]):.2%} | "
-                f"epsilon={agent.epsilon:.4f}"
-            )
-
-    return agent
-
-
-def evaluate_learned_agent(
+def run_episode(
     env: GridCleanEnv,
-    agent: QLearningAgent,
-    num_episodes: int = 100,
+    agent,
+    training: bool = False,
 ) -> Dict[str, float]:
-    # Evaluate the learned greedy policy without exploration.
-    episode_results: List[Dict[str, float]] = []
+    # Run one full episode and collect summary statistics.
+    state = env.reset()
+    done = False
+    total_reward = 0
+    final_info: Dict[str, float] = {}
 
-    for _ in range(num_episodes):
-        state = env.reset()
-        done = False
-        total_reward = 0
-        final_info: Dict[str, float] = {}
+    while not done:
+        if isinstance(agent, QLearningAgent):
+            action = agent.select_action(state, training=training)
+        else:
+            action = agent.select_action(state)
 
-        while not done:
-            action = agent.get_policy_action(state)
-            next_state, reward, done, info = env.step(action)
-
-            total_reward += reward
-            state = next_state
-            final_info = info
-
-        episode_results.append(
-            {
-                "total_reward": total_reward,
-                "steps_taken": final_info["steps_taken"],
-                "cleaned_ratio": final_info["cleaned_ratio"],
-                "success": 1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0,
-            }
-        )
+        next_state, reward, done, info = env.step(action)
+        state = next_state
+        total_reward += reward
+        final_info = info
 
     return {
-        "avg_reward": mean(result["total_reward"] for result in episode_results),
-        "avg_steps": mean(result["steps_taken"] for result in episode_results),
-        "avg_cleaned_ratio": mean(
-            result["cleaned_ratio"] for result in episode_results
-        ),
-        "success_rate": mean(result["success"] for result in episode_results),
+        "total_reward": total_reward,
+        "steps_taken": final_info["steps_taken"],
+        "cleaned_tiles": final_info["cleaned_tiles"],
+        "total_dirty_tiles": final_info["total_dirty_tiles"],
+        "cleaned_ratio": final_info["cleaned_ratio"],
+        "success": 1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0,
     }
 
 
-def print_summary(title: str, result: Dict[str, float]) -> None:
-    # Print one result block in a compact format.
+def evaluate_agent(
+    env: GridCleanEnv,
+    agent,
+    num_episodes: int = 100,
+) -> Dict[str, float]:
+    # Evaluate an agent over multiple episodes and average the results.
+    rewards: List[float] = []
+    steps: List[float] = []
+    cleaned_ratios: List[float] = []
+    successes: List[float] = []
+
+    for _ in range(num_episodes):
+        result = run_episode(env=env, agent=agent, training=False)
+        rewards.append(result["total_reward"])
+        steps.append(result["steps_taken"])
+        cleaned_ratios.append(result["cleaned_ratio"])
+        successes.append(result["success"])
+
+    return {
+        "average_reward": mean(rewards),
+        "average_steps": mean(steps),
+        "average_cleaned_ratio": mean(cleaned_ratios),
+        "success_rate": mean(successes),
+    }
+
+
+def print_summary(title: str, summary: Dict[str, float]) -> None:
+    # Print a compact summary block for an evaluated agent.
     print(f"\n=== {title} ===")
-    print(f"average reward: {result['avg_reward']:.2f}")
-    print(f"average steps: {result['avg_steps']:.2f}")
-    print(f"average cleaned ratio: {result['avg_cleaned_ratio']:.2%}")
-    print(f"success rate: {result['success_rate']:.2%}")
+    print(f"average reward: {summary['average_reward']:.2f}")
+    print(f"average steps: {summary['average_steps']:.2f}")
+    print(f"average cleaned ratio: {summary['average_cleaned_ratio']:.2%}")
+    print(f"success rate: {summary['success_rate']:.2%}")
 
 
 def main() -> None:
-    # Build separate environment instances for each phase.
-    random_env = build_default_env()
-    train_env = build_default_env()
-    eval_env = build_default_env()
+    # Evaluate the random baseline first.
+    env = GridCleanEnv()
 
     print("Evaluating random baseline...")
-    random_result = evaluate_random_agent(env=random_env, num_episodes=100, seed=42)
-    print_summary("Random Agent", random_result)
-
-    print("\nTraining Q-learning agent...")
-    learned_agent = train_q_learning_agent(
-        env=train_env,
-        num_episodes=TRAIN_EPISODES,
-        seed=TRAIN_SEED,
-        print_every=PRINT_EVERY,
-    )
-
-    print("\nEvaluating learned greedy policy...")
-    learned_result = evaluate_learned_agent(
-        env=eval_env,
-        agent=learned_agent,
+    random_agent = RandomAgent(action_space_size=len(env.ACTIONS), seed=42)
+    random_summary = evaluate_agent(
+        env=env,
+        agent=random_agent,
         num_episodes=100,
     )
-    print_summary("Learned Greedy Agent", learned_result)
+    print_summary("Random Agent", random_summary)
 
-    print("\n=== Improvement Summary ===")
-    print(f"reward gain: {learned_result['avg_reward'] - random_result['avg_reward']:.2f}")
-    print(f"step reduction: {random_result['avg_steps'] - learned_result['avg_steps']:.2f}")
-    print(
-        f"cleaned ratio gain: "
-        f"{(learned_result['avg_cleaned_ratio'] - random_result['avg_cleaned_ratio']) * 100:.2f} percentage points"
-    )
-    print(
-        f"success rate gain: "
-        f"{(learned_result['success_rate'] - random_result['success_rate']) * 100:.2f} percentage points"
-    )
-    print("\nTesting on the harder map...")
-    harder_random_env = build_harder_env()
-    harder_train_env = build_harder_env()
-    harder_eval_env = build_harder_env()
+    # Load a saved Q-learning agent or train one if needed.
+    print("\nPreparing Q-learning agent...")
+    q_agent = load_or_train_q_agent(seed=42, num_episodes=1000)
 
-    harder_random_result = evaluate_random_agent(
-        env=harder_random_env,
-        num_episodes=100,
-        seed=42,
-    )
-    print_summary("Random Agent on Harder Map", harder_random_result)
-
-    harder_learned_agent = train_q_learning_agent(
-        env=harder_train_env,
-        num_episodes=TRAIN_EPISODES,
-        seed=TRAIN_SEED,
-        print_every=PRINT_EVERY,
-    )
-
-    harder_learned_result = evaluate_learned_agent(
-        env=harder_eval_env,
-        agent=harder_learned_agent,
+    print("\nEvaluating Q-learning agent...")
+    q_summary = evaluate_agent(
+        env=env,
+        agent=q_agent,
         num_episodes=100,
     )
-    print_summary("Learned Greedy Agent on Harder Map", harder_learned_result)
+    print_summary("Q-Learning Agent", q_summary)
 
-def build_harder_env() -> GridCleanEnv:
-    # Build a slightly harder room layout for a tougher test.
-    from configs.default_config import HARDER_GRID_MAP, HARDER_MAX_STEPS
+    # Print a simple comparison section.
+    reward_gain = q_summary["average_reward"] - random_summary["average_reward"]
+    step_delta = random_summary["average_steps"] - q_summary["average_steps"]
+    cleaned_gain = q_summary["average_cleaned_ratio"] - random_summary["average_cleaned_ratio"]
+    success_gain = q_summary["success_rate"] - random_summary["success_rate"]
 
-    return GridCleanEnv(
-        grid_map=HARDER_GRID_MAP,
-        max_steps=HARDER_MAX_STEPS,
-        reward_clean=REWARD_CLEAN,
-        reward_move=REWARD_MOVE,
-        reward_revisit=REWARD_REVISIT,
-        reward_invalid=REWARD_INVALID,
-        reward_finish=REWARD_FINISH,
-    )
+    print("\n=== Comparison ===")
+    print(f"reward improvement: {reward_gain:.2f}")
+    print(f"step reduction: {step_delta:.2f}")
+    print(f"cleaned ratio improvement: {cleaned_gain:.2%}")
+    print(f"success rate improvement: {success_gain:.2%}")
+
 
 if __name__ == "__main__":
     main()
-
