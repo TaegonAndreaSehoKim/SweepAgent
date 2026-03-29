@@ -4,16 +4,13 @@ from pathlib import Path
 from typing import Dict, List
 
 from agents.q_learning_agent import QLearningAgent
-from configs.default_config import (
-    DEFAULT_GRID_MAP,
-    DEFAULT_MAX_STEPS,
+from configs.map_presets import (
     DISCOUNT_FACTOR,
     EPSILON_DECAY,
     EPSILON_MIN,
     EPSILON_START,
-    HARDER_GRID_MAP,
-    HARDER_MAX_STEPS,
     LEARNING_RATE,
+    MAP_PRESETS,
     PRINT_EVERY,
     REWARD_CLEAN,
     REWARD_FINISH,
@@ -30,19 +27,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def build_env(map_name: str = "default") -> GridCleanEnv:
-    # Build one of the supported map presets.
-    if map_name == "default":
-        grid_map = DEFAULT_GRID_MAP
-        max_steps = DEFAULT_MAX_STEPS
-    elif map_name == "harder":
-        grid_map = HARDER_GRID_MAP
-        max_steps = HARDER_MAX_STEPS
-    else:
-        raise ValueError("map_name must be either 'default' or 'harder'.")
+    # Build one of the shared map presets.
+    if map_name not in MAP_PRESETS:
+        supported_maps = ", ".join(MAP_PRESETS.keys())
+        raise ValueError(
+            f"Unknown map_name='{map_name}'. Supported maps: {supported_maps}"
+        )
+
+    preset = MAP_PRESETS[map_name]
 
     return GridCleanEnv(
-        grid_map=grid_map,
-        max_steps=max_steps,
+        grid_map=preset["grid_map"],
+        max_steps=preset["max_steps"],
         reward_clean=REWARD_CLEAN,
         reward_move=REWARD_MOVE,
         reward_revisit=REWARD_REVISIT,
