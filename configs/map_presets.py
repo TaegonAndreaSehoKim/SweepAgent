@@ -85,6 +85,19 @@ MAP_PRESETS = {
         "max_steps": 60,
         "battery_capacity": 6,
     },
+    "charge_required_v2": {
+        "grid_map": [
+            "###########",
+            "#R.D.C...D#",
+            "#.###.###.#",
+            "#.........#",
+            "#.###.###.#",
+            "#..D......#",
+            "###########",
+        ],
+        "max_steps": 120,
+        "battery_capacity": 10,
+    },
 }
 
 # Shared reward settings.

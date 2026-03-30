@@ -6,7 +6,7 @@ SweepAgent is a reinforcement learning project where a grid-based vacuum agent l
 
 The goal of SweepAgent is to train a self-learning agent that can clean a grid-based room more efficiently than a random policy.
 
-The project starts with a simple environment and baseline agent, then gradually expands to more advanced reinforcement learning settings.
+The project started with a simple environment and baseline agent, and now includes Q-learning, GIF-based policy visualization, multi-map benchmarking, and reusable experiment checkpoints.
 
 ## Current Status
 
@@ -16,18 +16,26 @@ Completed:
 - reward and terminal logic
 - text-based environment rendering
 - random baseline agent
-- evaluation script for baseline performance
-
-Planned next:
 - Q-learning agent
 - training loop with epsilon-greedy exploration
-- reward and cleaning performance plots
-- policy comparison between random and learned agents
-- step-by-step visual playback of the agent's movement using a dedicated visualization tool
+- training plots for reward, cleaned ratio, success trend, and epsilon decay
+- random vs learned policy comparison
+- GIF rendering for learned policy playback
+- side-by-side comparison GIF rendering
+- shared map presets
+- multi-map benchmarking across several layouts
+- shared experiment utilities for environment creation and checkpoint reuse
+- map-specific checkpoint saving and loading
+
+Next ideas:
+- add battery constraints and charging stations
+- add dynamic obstacles
+- try larger and more difficult room layouts
+- test additional RL methods beyond tabular Q-learning
 
 ## Environment Overview
 
-The current environment is a small grid-based room made of:
+The environment is a grid-based room made of:
 - walls (`#`)
 - empty tiles (`.`)
 - dirty tiles (`D`)
@@ -65,18 +73,18 @@ An episode ends when:
 
 ## Rendering and Visualization
 
-At the current stage, the environment is rendered using a simple text-based ASCII view in the terminal for debugging and quick inspection.
+The project now supports both text-based rendering and GIF-based visualization.
 
-In later stages, I plan to add a dedicated visualization tool so that the full movement process of the agent can be viewed more clearly. This will likely include:
-- step-by-step animation of the agent moving through the room
-- visual indication of cleaned and remaining dirty tiles
-- saved episode playback as GIF or video
-- easier comparison between random and learned policies
+Available visual outputs include:
+- step-by-step terminal rendering for debugging
+- learned greedy policy GIF playback
+- side-by-side comparison GIFs between random and learned agents
 
-Possible future visualization options include:
-- matplotlib animation
-- GIF generation with imageio
-- an interactive 2D interface using pygame
+Generated GIF outputs:
+- `outputs/gifs/learned_policy_harder.gif`
+- `outputs/gifs/comparison_harder.gif`
+
+These visualizations make it much easier to inspect the learned behavior and compare it directly against the random baseline.
 
 ## Project Structure
 
@@ -86,14 +94,24 @@ SweepAgent/
 ├── requirements.txt
 ├── .gitignore
 ├── configs/
-│   └── default_config.py
+│   ├── default_config.py
+│   └── map_presets.py
 ├── env/
 │   └── grid_clean_env.py
 ├── agents/
-│   └── random_agent.py
+│   ├── random_agent.py
+│   └── q_learning_agent.py
+├── utils/
+│   └── experiment_utils.py
 ├── scripts/
-│   └── evaluate_agents.py
+│   ├── evaluate_agents.py
+│   ├── train_q_learning.py
+│   ├── compare_agents.py
+│   ├── render_policy_gif.py
+│   ├── render_comparison_gif.py
+│   └── benchmark_maps.py
 ├── outputs/
+│   ├── checkpoints/
 │   ├── plots/
 │   ├── gifs/
 │   └── logs/
@@ -102,17 +120,33 @@ SweepAgent/
         └── week1.md
 ```
 
-## Current Baseline Result
+## Current Experiment Workflow
 
-Random agent evaluation over 100 episodes:
+The project now uses shared experiment utilities and map-specific checkpoints so that
+training results can be reused across evaluation and visualization scripts.
 
-- Average total reward: `-94.03`
-- Average steps taken: `64.58`
-- Average cleaned tiles: `2.73 / 3`
-- Average cleaned ratio: `91.00%`
-- Success rate: `79.00%`
+### Shared utilities
 
-The random baseline performs better than expected because the current map is small and the step budget is relatively generous. This will make it useful to later adjust environment difficulty and compare performance against a learned agent.
+Common environment creation and checkpoint handling are centralized in:
+
+- `utils/experiment_utils.py`
+
+This utility module provides:
+- `build_env(map_name)`
+- `get_checkpoint_path(map_name, seed)`
+- `train_q_learning_agent(...)`
+- `load_or_train_q_agent(...)`
+
+### Checkpoint naming
+
+Trained Q-learning agents are saved per map:
+
+- `outputs/checkpoints/q_learning_agent_default_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_harder_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_wide_room_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_corridor_seed_42.json`
+
+This prevents policies trained on different maps from being mixed together.
 
 ## How to Run
 
@@ -135,37 +169,58 @@ pip install -r requirements.txt
 python scripts/evaluate_agents.py
 ```
 
-## Roadmap
-
-- [x] Build grid cleaning environment
-- [x] Add random baseline agent
-- [x] Add baseline evaluation script
-- [x] Implement Q-learning agent
-- [x] Train and evaluate learned policy
-- [x] Visualize reward and cleaning progress
-- [x] Add step-by-step movement visualization
-- [x] Compare random vs learned agent
-- [x] Add a harder map evaluation
-- [ ] Add more room layouts
-- [ ] Explore more difficulty settings
-- [ ] Test additional RL methods
-
-## Future Extensions
-
-Possible future improvements include:
-- larger and more complex room layouts
-- battery constraints and charging stations
-- dynamic obstacles
-- multiple cleaning agents
-- deep reinforcement learning methods such as DQN
-
-## Devlog
-
-Development notes are recorded in:
+### 4. Train a Q-learning agent on the default map
 
 ```bash
-docs/devlog/week1.md
+python scripts/train_q_learning.py
 ```
+
+By default, this saves:
+- checkpoint: `outputs/checkpoints/q_learning_agent_default_seed_42.json`
+- plots:
+  - `outputs/plots/training_reward_default.png`
+  - `outputs/plots/training_cleaned_ratio_default.png`
+  - `outputs/plots/training_success_default.png`
+  - `outputs/plots/training_epsilon_default.png`
+
+### 5. Compare the random baseline and learned Q-learning policy
+
+```bash
+python scripts/compare_agents.py
+```
+
+This script reuses a saved checkpoint when available instead of retraining.
+
+### 6. Render the learned greedy policy as a GIF
+
+```bash
+python scripts/render_policy_gif.py
+```
+
+This script also reuses the saved checkpoint for the selected map.
+
+### 7. Render a side-by-side comparison GIF
+
+```bash
+python scripts/render_comparison_gif.py
+```
+
+This generates a side-by-side rollout comparing:
+- random agent
+- learned greedy Q-learning agent
+
+### 8. Run the multi-map benchmark
+
+```bash
+python scripts/benchmark_maps.py
+```
+
+This generates:
+- `outputs/logs/map_benchmark_results.csv`
+- `outputs/plots/map_benchmark_success_rate.png`
+- `outputs/plots/map_benchmark_reward.png`
+- `outputs/plots/map_benchmark_steps.png`
+- `outputs/plots/map_benchmark_cleaned_ratio.png`
 
 ## Current Results
 
@@ -205,21 +260,9 @@ Learned greedy policy over 100 episodes:
 
 These results show that the learned policy is not only better than the random baseline on the default map, but also remains highly effective on a more difficult room layout.
 
-## Visualization
-
-The project currently supports GIF-based policy playback for clearer step-by-step inspection of the agent's behavior.
-
-Generated outputs:
-- `outputs/gifs/learned_policy_harder.gif`
-- `outputs/gifs/comparison_harder.gif`
-
-The learned policy GIF shows a full greedy rollout after training.
-
-The comparison GIF shows the random policy and the learned policy side by side on the same map, making it easier to observe differences in efficiency, path quality, and overall task completion behavior.
-
 ## Multi-Map Benchmark
 
-To test whether the learned policy remains effective beyond a single room layout, I evaluated SweepAgent on four map presets:
+To test whether the learned policy remains effective beyond a single room layout, SweepAgent was evaluated on four map presets:
 - `default`
 - `harder`
 - `wide_room`
@@ -253,4 +296,36 @@ These figures highlight three important trends:
 2. The learned policy uses far fewer steps than the random baseline.
 3. The learned policy maintains full cleaning performance even when the room layout becomes more difficult.
 
-Among the current figures, the steps plot and reward plot are especially informative because they show not only task completion, but also efficiency.
+## Roadmap
+
+- [x] Build grid cleaning environment
+- [x] Add random baseline agent
+- [x] Add baseline evaluation script
+- [x] Implement Q-learning agent
+- [x] Train and evaluate learned policy
+- [x] Visualize reward and cleaning progress
+- [x] Add step-by-step movement visualization
+- [x] Compare random vs learned agent
+- [x] Add a harder map evaluation
+- [x] Add more room layouts
+- [x] Add multi-map benchmarking
+- [x] Reuse checkpoints across scripts
+- [ ] Explore more difficulty settings
+- [ ] Test additional RL methods
+
+## Future Extensions
+
+Possible future improvements include:
+- larger and more complex room layouts
+- battery constraints and charging stations
+- dynamic obstacles
+- multiple cleaning agents
+- deep reinforcement learning methods such as DQN
+
+## Devlog
+
+Development notes are recorded in:
+
+```bash
+docs/devlog/week1.md
+```

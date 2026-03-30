@@ -8,7 +8,6 @@ from typing import List
 import imageio.v2 as imageio
 import matplotlib
 
-# Use a non-interactive backend for file rendering.
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
@@ -17,7 +16,6 @@ from matplotlib.patches import Circle, Rectangle
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
-    # Add the project root so local imports work from this script.
     sys.path.append(str(PROJECT_ROOT))
 
 from agents.q_learning_agent import QLearningAgent
@@ -27,7 +25,6 @@ from utils.experiment_utils import build_env, load_or_train_q_agent
 
 
 def parse_args() -> argparse.Namespace:
-    # Parse command-line arguments for GIF rendering configuration.
     parser = argparse.ArgumentParser(
         description="Render a learned SweepAgent policy as a GIF."
     )
@@ -35,7 +32,7 @@ def parse_args() -> argparse.Namespace:
         "--map-name",
         type=str,
         default="harder",
-        help="Map preset name (for example: default, harder, wide_room, corridor, battery_harder).",
+        help="Map preset name.",
     )
     parser.add_argument(
         "--episodes",
@@ -59,12 +56,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def get_tile_color(env: GridCleanEnv, row: int, col: int) -> str:
-    # Choose the tile color based on wall and dirty/clean status.
     if env.grid[row][col] == "#":
         return "#2f2f2f"
 
-    position = (row, col)
+    if env._is_charger(row, col):
+        return "#cdb4db"
 
+    position = (row, col)
     if position in env.dirty_index_map:
         dirty_idx = env.dirty_index_map[position]
         is_cleaned = ((env.cleaned_mask >> dirty_idx) & 1) == 1
@@ -74,7 +72,6 @@ def get_tile_color(env: GridCleanEnv, row: int, col: int) -> str:
 
 
 def format_battery_text(env: GridCleanEnv) -> str:
-    # Return a readable battery label for titles.
     if env.battery_capacity is None:
         return "Battery: off"
     return f"Battery: {env.battery_remaining}/{env.battery_capacity}"
@@ -86,7 +83,6 @@ def draw_frame(
     total_reward: float,
     title: str,
 ) -> np.ndarray:
-    # Draw one frame of the current environment state.
     fig_width = max(5, env.cols * 0.9)
     fig_height = max(4, env.rows * 0.9)
 
@@ -111,6 +107,17 @@ def draw_frame(
                     linewidth=1.5,
                 )
             )
+
+            if env._is_charger(row, col):
+                ax.text(
+                    col + 0.5,
+                    row + 0.52,
+                    "C",
+                    ha="center",
+                    va="center",
+                    fontsize=12,
+                    fontweight="bold",
+                )
 
     robot_row, robot_col = env.robot_pos
     ax.add_patch(
@@ -140,7 +147,6 @@ def draw_frame(
     fig.tight_layout()
     fig.canvas.draw()
 
-    # Convert the matplotlib canvas to an RGB image array.
     frame = np.asarray(fig.canvas.buffer_rgba())[:, :, :3].copy()
     plt.close(fig)
     return frame
@@ -151,7 +157,6 @@ def collect_greedy_episode_frames(
     agent: QLearningAgent,
     title: str,
 ) -> List[np.ndarray]:
-    # Run one greedy episode and capture every step as a frame.
     frames: List[np.ndarray] = []
 
     state = env.reset()
@@ -193,7 +198,6 @@ def save_gif(
     output_path: Path,
     frame_duration: float = 0.7,
 ) -> None:
-    # Save the captured frames as a GIF file.
     output_path.parent.mkdir(parents=True, exist_ok=True)
     imageio.mimsave(output_path, frames, duration=frame_duration, loop=0)
 
@@ -204,7 +208,6 @@ def render_policy_gif(
     seed: int = TRAIN_SEED,
     frame_duration: float = 0.7,
 ) -> Path:
-    # Load or train the agent, then render one greedy episode to a GIF.
     render_env = build_env(map_name=map_name)
 
     agent = load_or_train_q_agent(

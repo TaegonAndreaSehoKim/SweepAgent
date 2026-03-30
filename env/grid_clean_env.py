@@ -40,6 +40,9 @@ class GridCleanEnv:
         battery_capacity: int | None = None,
         first_recharge_reward: int = 1,
         successful_recharge_completion_bonus: int = 10,
+        low_battery_ratio: float = 0.3,
+        reward_move_toward_charger: int = 1,
+        penalty_move_away_from_charger: int = -1,
     ) -> None:
         if grid_map is None:
             grid_map = [
@@ -86,6 +89,10 @@ class GridCleanEnv:
         self.successful_recharge_completion_bonus = successful_recharge_completion_bonus
         self.has_recharged_this_episode = False
 
+        self.low_battery_ratio = low_battery_ratio
+        self.reward_move_toward_charger = reward_move_toward_charger
+        self.penalty_move_away_from_charger = penalty_move_away_from_charger
+
     def _find_start_pos(self) -> Tuple[int, int]:
         start_positions = []
         for r in range(self.rows):
@@ -127,6 +134,29 @@ class GridCleanEnv:
 
     def _is_charger(self, row: int, col: int) -> bool:
         return (row, col) in self.charger_positions
+
+    def _distance_to_nearest_charger(self, row: int, col: int) -> int:
+        # Use Manhattan distance to the nearest charger as a simple shaping signal.
+        if not self.charger_positions:
+            return -1
+
+        return min(
+            abs(row - charger_row) + abs(col - charger_col)
+            for charger_row, charger_col in self.charger_positions
+        )
+
+    def _should_apply_charger_shaping(self) -> bool:
+        # Only shape behavior when battery mode is enabled and the remaining
+        # battery falls below a fraction of the full capacity.
+        return (
+                self.battery_remaining is not None
+                and self.battery_capacity is not None
+                and self.battery_remaining <= max(
+            1,
+            int(self.battery_capacity * self.low_battery_ratio),
+        )
+                and len(self.charger_positions) > 0
+        )
 
     def _clean_tile(self, row: int, col: int) -> None:
         pos = (row, col)
@@ -183,6 +213,13 @@ class GridCleanEnv:
         recharged = False
         termination_reason = "ongoing"
 
+        charger_distance_before = -1
+        if self._should_apply_charger_shaping():
+            charger_distance_before = self._distance_to_nearest_charger(
+                current_row,
+                current_col,
+            )
+
         if self._is_wall(next_row, next_col):
             reward += self.reward_invalid
         else:
@@ -196,6 +233,30 @@ class GridCleanEnv:
                     reward += self.reward_revisit
                 else:
                     reward += self.reward_move
+
+            # Encourage moving toward the charger only when battery is low.
+            if charger_distance_before != -1:
+                charger_distance_after = self._distance_to_nearest_charger(
+                    next_row,
+                    next_col,
+                )
+
+                emergency_mode = (
+                        self.battery_remaining is not None
+                        and self.battery_remaining <= charger_distance_before
+                )
+
+                toward_reward = self.reward_move_toward_charger
+                away_penalty = self.penalty_move_away_from_charger
+
+                if emergency_mode:
+                    toward_reward += 1
+                    away_penalty -= 1
+
+                if charger_distance_after < charger_distance_before:
+                    reward += toward_reward
+                elif charger_distance_after > charger_distance_before:
+                    reward += away_penalty
 
             if self._is_charger(next_row, next_col) and self.battery_capacity is not None:
                 if self.battery_remaining < self.battery_capacity:
