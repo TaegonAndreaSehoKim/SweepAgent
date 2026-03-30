@@ -39,7 +39,11 @@ FAIL_COLOR = (220, 53, 69)
 
 WINDOW_PADDING_X = 24
 WINDOW_PADDING_Y = 24
-STATUS_PANEL_HEIGHT = 170
+STATUS_PANEL_HEIGHT = 190
+
+MIN_STEP_DELAY = 0.1
+MAX_STEP_DELAY = 1.5
+STEP_DELAY_DELTA = 0.1
 
 
 def parse_args() -> argparse.Namespace:
@@ -284,6 +288,8 @@ def build_left_status_lines(
 def build_right_status_lines(
     env: GridCleanEnv,
     done: bool,
+    is_paused: bool,
+    step_delay: float,
 ) -> list[tuple[str, Tuple[int, int, int]]]:
     cleaned_tiles = env._count_cleaned_tiles()
     total_dirty_tiles = env.total_dirty_tiles
@@ -303,8 +309,9 @@ def build_right_status_lines(
         else:
             lines.append(("Status: stopped", FAIL_COLOR))
     else:
-        lines.append(("Status: running", TEXT_COLOR))
+        lines.append(("Status: paused" if is_paused else "Status: running", TEXT_COLOR))
 
+    lines.append((f"Delay: {step_delay:.1f}s", TEXT_COLOR))
     return lines
 
 
@@ -314,6 +321,8 @@ def draw_status_panel(
     total_reward: float,
     step_idx: int,
     done: bool,
+    is_paused: bool,
+    step_delay: float,
     width: int,
     title_font: pygame.font.Font,
     body_font: pygame.font.Font,
@@ -322,7 +331,11 @@ def draw_status_panel(
     title = title_font.render("SweepAgent UI Demo", True, TEXT_COLOR)
     screen.blit(title, (WINDOW_PADDING_X, 18))
 
-    help_text = small_font.render("ESC or close window to exit", True, TEXT_COLOR)
+    help_text = small_font.render(
+        "ESC quit | SPACE pause | R restart | [ ] speed",
+        True,
+        TEXT_COLOR,
+    )
     help_rect = help_text.get_rect(topright=(width - WINDOW_PADDING_X, 26))
     screen.blit(help_text, help_rect)
 
@@ -334,6 +347,8 @@ def draw_status_panel(
     right_lines = build_right_status_lines(
         env=env,
         done=done,
+        is_paused=is_paused,
+        step_delay=step_delay,
     )
 
     left_x = WINDOW_PADDING_X
@@ -355,11 +370,21 @@ def draw_status_panel(
         y += line_gap
 
 
+def reset_demo_state(env: GridCleanEnv) -> tuple[Tuple[int, int, int, int], bool, float, int, list[Tuple[int, int]], dict[Tuple[int, int], int]]:
+    state = env.reset()
+    done = False
+    total_reward = 0.0
+    step_idx = 0
+    path_history = [env.robot_pos]
+    visit_counts = {env.robot_pos: 1}
+    return state, done, total_reward, step_idx, path_history, visit_counts
+
+
 def run_greedy_demo(
     env: GridCleanEnv,
     agent: QLearningAgent,
     cell_size: int,
-    step_delay: float,
+    initial_step_delay: float,
 ) -> None:
     pygame.init()
     pygame.display.set_caption("SweepAgent UI Demo")
@@ -377,27 +402,40 @@ def run_greedy_demo(
     screen = pygame.display.set_mode((width, height))
     clock = pygame.time.Clock()
 
-    state = env.reset()
-    done = False
-    total_reward = 0.0
-    step_idx = 0
+    state, done, total_reward, step_idx, path_history, visit_counts = reset_demo_state(env)
+    step_delay = initial_step_delay
+    is_paused = False
     last_step_time = time.time()
-
-    path_history: list[Tuple[int, int]] = [env.robot_pos]
-    visit_counts: dict[Tuple[int, int], int] = {env.robot_pos: 1}
 
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 return
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                pygame.quit()
-                return
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    pygame.quit()
+                    return
+
+                if event.key == pygame.K_SPACE:
+                    is_paused = not is_paused
+                    last_step_time = time.time()
+
+                if event.key == pygame.K_r:
+                    state, done, total_reward, step_idx, path_history, visit_counts = reset_demo_state(env)
+                    is_paused = False
+                    last_step_time = time.time()
+
+                if event.key == pygame.K_LEFTBRACKET:
+                    step_delay = min(MAX_STEP_DELAY, step_delay + STEP_DELAY_DELTA)
+
+                if event.key == pygame.K_RIGHTBRACKET:
+                    step_delay = max(MIN_STEP_DELAY, step_delay - STEP_DELAY_DELTA)
 
         now = time.time()
 
-        if not done and now - last_step_time >= step_delay:
+        if not done and not is_paused and now - last_step_time >= step_delay:
             action = agent.get_policy_action(state)
             next_state, reward, done, _ = env.step(action)
             state = next_state
@@ -416,6 +454,8 @@ def run_greedy_demo(
             total_reward=total_reward,
             step_idx=step_idx,
             done=done,
+            is_paused=is_paused,
+            step_delay=step_delay,
             width=width,
             title_font=title_font,
             body_font=body_font,
@@ -468,7 +508,7 @@ def main() -> None:
         env=env,
         agent=agent,
         cell_size=args.cell_size,
-        step_delay=args.step_delay,
+        initial_step_delay=args.step_delay,
     )
 
 
