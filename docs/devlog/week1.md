@@ -283,3 +283,88 @@ For the next stage, I plan to:
 - improve README presentation with embedded benchmark figures
 - try additional environment variants
 - explore richer RL extensions such as battery constraints or obstacles
+
+## Day 5 - Battery Constraints, Charging Stations, and Multi-Seed Validation
+
+Today I extended SweepAgent beyond simple cleaning and added battery-aware, charger-aware behavior.
+
+### What I completed
+- Added optional battery constraints to `env/grid_clean_env.py`
+- Extended the environment state to include battery level
+- Added charging station tiles (`C`)
+- Added recharge logic so the battery is restored to full on charger tiles
+- Added charger-aware reward shaping for more learnable recharge behavior
+- Added `battery_harder` as a battery-constrained environment
+- Added `charging_demo` as a charger behavior learning map
+- Added `charge_required_v2` as a harder charger-dependent map
+- Updated charger-aware GIF rendering for learned policy playback and side-by-side comparison
+- Validated charger-aware behavior across multiple random seeds
+
+### Battery milestone
+The battery-constrained environment successfully increased difficulty while preserving learnability.
+
+On `battery_harder`, the learned policy was able to clean all tiles consistently, while the random baseline performed very poorly. This confirmed that battery-aware state tracking was working correctly and that the learned agent could adapt its policy to a tighter movement budget.
+
+### Charging behavior milestone
+The first goal for charging was not to make charging absolutely mandatory, but to make the learned policy actually use a charger during rollout.
+
+This was achieved with `charging_demo`. The learned policy:
+- moved to a charger during the episode
+- restored its battery
+- continued cleaning after recharge
+- finished the full cleaning task successfully
+
+This was the first stage where SweepAgent learned behavior that goes beyond direct cleaning and starts to resemble resource-aware planning.
+
+### Charge-required validation
+After confirming charger usage on `charging_demo`, I moved to a harder map called `charge_required_v2`.
+
+This map required more careful route planning under battery limits. Early versions were unstable, so I refined:
+- map layout
+- battery capacity
+- battery-aware shaping
+- recharge-related reward shaping
+
+The final version was validated with multiple seeds.
+
+Evaluation over 100 episodes showed:
+
+- Seed 11:
+  - Avg reward: `81.00`
+  - Avg steps: `20.00`
+  - Avg cleaned ratio: `100.00%`
+  - Success rate: `100.00%`
+
+- Seed 22:
+  - Avg reward: `81.00`
+  - Avg steps: `20.00`
+  - Avg cleaned ratio: `100.00%`
+  - Success rate: `100.00%`
+
+- Seed 33:
+  - Avg reward: `81.00`
+  - Avg steps: `20.00`
+  - Avg cleaned ratio: `100.00%`
+  - Success rate: `100.00%`
+
+The random baseline remained at 0% success rate on the same map.
+
+### Generated artifacts
+New charger-aware outputs include:
+- `outputs/gifs/learned_policy_charging_demo.gif`
+- `outputs/gifs/comparison_charging_demo.gif`
+- `outputs/gifs/learned_policy_charge_required_v2.gif`
+- `outputs/gifs/comparison_charge_required_v2.gif`
+- `outputs/checkpoints/q_learning_agent_battery_harder_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_charging_demo_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_charge_required_v2_seed_42.json`
+
+### Takeaway
+This was the first stage where SweepAgent clearly demonstrated charger-aware reinforcement learning behavior.
+
+The project now goes beyond basic path efficiency:
+- it can manage battery limits
+- it can use charging stations mid-episode
+- it can solve a charger-dependent map reliably across multiple seeds
+
+At this point, the next natural step is no longer environment basics. The project is ready to move toward richer interaction and presentation, such as program-based UI visualization or dynamic obstacle scenarios.
