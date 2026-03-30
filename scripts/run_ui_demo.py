@@ -24,8 +24,13 @@ DIRTY_COLOR = (255, 209, 102)
 CLEANED_COLOR = (183, 228, 199)
 CHARGER_COLOR = (205, 180, 219)
 GRID_LINE_COLOR = (173, 181, 189)
+
 ROBOT_COLOR = (58, 134, 255)
 ROBOT_BORDER_COLOR = (29, 53, 87)
+
+PATH_COLOR = (64, 145, 255)
+PATH_RECENT_COLOR = (29, 78, 216)
+
 TEXT_COLOR = (33, 37, 41)
 SUCCESS_COLOR = (25, 135, 84)
 FAIL_COLOR = (220, 53, 69)
@@ -118,6 +123,19 @@ def get_tile_color(tile_type: str) -> Tuple[int, int, int]:
     return FLOOR_COLOR
 
 
+def cell_center(
+    row: int,
+    col: int,
+    cell_size: int,
+    top_margin: int,
+    left_margin: int,
+) -> Tuple[int, int]:
+    return (
+        left_margin + col * cell_size + cell_size // 2,
+        top_margin + row * cell_size + cell_size // 2,
+    )
+
+
 def draw_grid(
     screen: pygame.Surface,
     env: GridCleanEnv,
@@ -146,10 +164,80 @@ def draw_grid(
                 label_rect = label.get_rect(center=rect.center)
                 screen.blit(label, label_rect)
 
+
+def draw_path_overlay(
+    screen: pygame.Surface,
+    path_history: list[Tuple[int, int]],
+    cell_size: int,
+    top_margin: int,
+    left_margin: int,
+) -> None:
+    if len(path_history) < 2:
+        return
+
+    recent_start_idx = max(1, len(path_history) - 5)
+
+    for idx in range(1, len(path_history)):
+        prev_row, prev_col = path_history[idx - 1]
+        curr_row, curr_col = path_history[idx]
+
+        start_pos = cell_center(
+            row=prev_row,
+            col=prev_col,
+            cell_size=cell_size,
+            top_margin=top_margin,
+            left_margin=left_margin,
+        )
+        end_pos = cell_center(
+            row=curr_row,
+            col=curr_col,
+            cell_size=cell_size,
+            top_margin=top_margin,
+            left_margin=left_margin,
+        )
+
+        if idx >= recent_start_idx:
+            color = PATH_RECENT_COLOR
+            width = 6
+        else:
+            color = PATH_COLOR
+            width = 4
+
+        pygame.draw.line(screen, color, start_pos, end_pos, width)
+
+    for idx, (row, col) in enumerate(path_history[:-1]):
+        pos = cell_center(
+            row=row,
+            col=col,
+            cell_size=cell_size,
+            top_margin=top_margin,
+            left_margin=left_margin,
+        )
+
+        if idx >= recent_start_idx - 1:
+            radius = max(3, cell_size // 12)
+            color = PATH_RECENT_COLOR
+        else:
+            radius = max(2, cell_size // 16)
+            color = PATH_COLOR
+
+        pygame.draw.circle(screen, color, pos, radius)
+
+
+def draw_robot(
+    screen: pygame.Surface,
+    env: GridCleanEnv,
+    cell_size: int,
+    top_margin: int,
+    left_margin: int,
+) -> None:
     robot_row, robot_col = env.robot_pos
-    robot_center = (
-        left_margin + robot_col * cell_size + cell_size // 2,
-        top_margin + robot_row * cell_size + cell_size // 2,
+    robot_center = cell_center(
+        row=robot_row,
+        col=robot_col,
+        cell_size=cell_size,
+        top_margin=top_margin,
+        left_margin=left_margin,
     )
     robot_radius = max(10, cell_size // 4)
 
@@ -271,6 +359,8 @@ def run_greedy_demo(
     step_idx = 0
     last_step_time = time.time()
 
+    path_history: list[Tuple[int, int]] = [env.robot_pos]
+
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -289,6 +379,7 @@ def run_greedy_demo(
             total_reward += reward
             step_idx += 1
             last_step_time = now
+            path_history.append(env.robot_pos)
 
         screen.fill(BACKGROUND_COLOR)
 
@@ -311,6 +402,22 @@ def run_greedy_demo(
             top_margin=top_margin,
             left_margin=left_margin,
             body_font=body_font,
+        )
+
+        draw_path_overlay(
+            screen=screen,
+            path_history=path_history,
+            cell_size=cell_size,
+            top_margin=top_margin,
+            left_margin=left_margin,
+        )
+
+        draw_robot(
+            screen=screen,
+            env=env,
+            cell_size=cell_size,
+            top_margin=top_margin,
+            left_margin=left_margin,
         )
 
         pygame.display.flip()
