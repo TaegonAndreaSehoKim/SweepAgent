@@ -1,0 +1,341 @@
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+from typing import Tuple
+
+import pygame
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
+from agents.q_learning_agent import QLearningAgent
+from env.grid_clean_env import GridCleanEnv
+from utils.experiment_utils import build_env, load_or_train_q_agent
+
+
+BACKGROUND_COLOR = (245, 247, 250)
+WALL_COLOR = (47, 47, 47)
+FLOOR_COLOR = (248, 249, 250)
+DIRTY_COLOR = (255, 209, 102)
+CLEANED_COLOR = (183, 228, 199)
+CHARGER_COLOR = (205, 180, 219)
+GRID_LINE_COLOR = (173, 181, 189)
+ROBOT_COLOR = (58, 134, 255)
+ROBOT_BORDER_COLOR = (29, 53, 87)
+TEXT_COLOR = (33, 37, 41)
+SUCCESS_COLOR = (25, 135, 84)
+FAIL_COLOR = (220, 53, 69)
+
+WINDOW_PADDING_X = 24
+WINDOW_PADDING_Y = 24
+STATUS_PANEL_HEIGHT = 170
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run a simple pygame UI demo for a learned SweepAgent policy."
+    )
+    parser.add_argument(
+        "--map-name",
+        type=str,
+        default="charge_required_v2",
+        help="Map preset name to visualize.",
+    )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=5000,
+        help="Training episodes used only if a checkpoint does not already exist.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed used for checkpoint lookup or training.",
+    )
+    parser.add_argument(
+        "--cell-size",
+        type=int,
+        default=72,
+        help="Pixel size of each grid cell.",
+    )
+    parser.add_argument(
+        "--step-delay",
+        type=float,
+        default=0.5,
+        help="Delay in seconds between greedy policy actions.",
+    )
+    return parser.parse_args()
+
+
+def load_fonts() -> tuple[pygame.font.Font, pygame.font.Font, pygame.font.Font]:
+    candidate_names = [
+        "Segoe UI",
+        "Malgun Gothic",
+        "맑은 고딕",
+        "Arial",
+        "Calibri",
+    ]
+
+    def build_font(size: int, bold: bool = False) -> pygame.font.Font:
+        for name in candidate_names:
+            matched = pygame.font.match_font(name, bold=bold)
+            if matched:
+                return pygame.font.Font(matched, size)
+        return pygame.font.Font(None, size)
+
+    title_font = build_font(34, bold=True)
+    body_font = build_font(22, bold=False)
+    small_font = build_font(18, bold=False)
+    return title_font, body_font, small_font
+
+
+def get_tile_type(env: GridCleanEnv, row: int, col: int) -> str:
+    if env.grid[row][col] == "#":
+        return "wall"
+    if env._is_charger(row, col):
+        return "charger"
+    if (row, col) in env.dirty_index_map:
+        dirty_idx = env.dirty_index_map[(row, col)]
+        is_cleaned = ((env.cleaned_mask >> dirty_idx) & 1) == 1
+        return "cleaned" if is_cleaned else "dirty"
+    return "floor"
+
+
+def get_tile_color(tile_type: str) -> Tuple[int, int, int]:
+    if tile_type == "wall":
+        return WALL_COLOR
+    if tile_type == "dirty":
+        return DIRTY_COLOR
+    if tile_type == "cleaned":
+        return CLEANED_COLOR
+    if tile_type == "charger":
+        return CHARGER_COLOR
+    return FLOOR_COLOR
+
+
+def draw_grid(
+    screen: pygame.Surface,
+    env: GridCleanEnv,
+    cell_size: int,
+    top_margin: int,
+    left_margin: int,
+    body_font: pygame.font.Font,
+) -> None:
+    for row in range(env.rows):
+        for col in range(env.cols):
+            tile_type = get_tile_type(env, row, col)
+            tile_color = get_tile_color(tile_type)
+
+            rect = pygame.Rect(
+                left_margin + col * cell_size,
+                top_margin + row * cell_size,
+                cell_size,
+                cell_size,
+            )
+
+            pygame.draw.rect(screen, tile_color, rect)
+            pygame.draw.rect(screen, GRID_LINE_COLOR, rect, width=2)
+
+            if tile_type == "charger":
+                label = body_font.render("C", True, TEXT_COLOR)
+                label_rect = label.get_rect(center=rect.center)
+                screen.blit(label, label_rect)
+
+    robot_row, robot_col = env.robot_pos
+    robot_center = (
+        left_margin + robot_col * cell_size + cell_size // 2,
+        top_margin + robot_row * cell_size + cell_size // 2,
+    )
+    robot_radius = max(10, cell_size // 4)
+
+    pygame.draw.circle(screen, ROBOT_COLOR, robot_center, robot_radius)
+    pygame.draw.circle(screen, ROBOT_BORDER_COLOR, robot_center, robot_radius, width=3)
+
+
+def build_left_status_lines(
+    env: GridCleanEnv,
+    total_reward: float,
+    step_idx: int,
+) -> list[tuple[str, Tuple[int, int, int]]]:
+    return [
+        (f"Map: {getattr(env, 'map_name', 'unknown')}", TEXT_COLOR),
+        (f"Step: {step_idx}", TEXT_COLOR),
+        (f"Reward: {total_reward:.0f}", TEXT_COLOR),
+    ]
+
+
+def build_right_status_lines(
+    env: GridCleanEnv,
+    done: bool,
+) -> list[tuple[str, Tuple[int, int, int]]]:
+    cleaned_tiles = env._count_cleaned_tiles()
+    total_dirty_tiles = env.total_dirty_tiles
+
+    lines: list[tuple[str, Tuple[int, int, int]]] = [
+        (f"Cleaned: {cleaned_tiles}/{total_dirty_tiles}", TEXT_COLOR),
+    ]
+
+    if env.battery_capacity is None:
+        lines.append(("Battery: off", TEXT_COLOR))
+    else:
+        lines.append((f"Battery: {env.battery_remaining}/{env.battery_capacity}", TEXT_COLOR))
+
+    if done:
+        if cleaned_tiles == total_dirty_tiles:
+            lines.append(("Status: success", SUCCESS_COLOR))
+        else:
+            lines.append(("Status: stopped", FAIL_COLOR))
+    else:
+        lines.append(("Status: running", TEXT_COLOR))
+
+    return lines
+
+
+def draw_status_panel(
+    screen: pygame.Surface,
+    env: GridCleanEnv,
+    total_reward: float,
+    step_idx: int,
+    done: bool,
+    width: int,
+    title_font: pygame.font.Font,
+    body_font: pygame.font.Font,
+    small_font: pygame.font.Font,
+) -> None:
+    title = title_font.render("SweepAgent UI Demo", True, TEXT_COLOR)
+    screen.blit(title, (WINDOW_PADDING_X, 18))
+
+    help_text = small_font.render("ESC or close window to exit", True, TEXT_COLOR)
+    help_rect = help_text.get_rect(topright=(width - WINDOW_PADDING_X, 26))
+    screen.blit(help_text, help_rect)
+
+    left_lines = build_left_status_lines(
+        env=env,
+        total_reward=total_reward,
+        step_idx=step_idx,
+    )
+    right_lines = build_right_status_lines(
+        env=env,
+        done=done,
+    )
+
+    left_x = WINDOW_PADDING_X
+    right_x = width - WINDOW_PADDING_X
+    start_y = 72
+    line_gap = 26
+
+    y = start_y
+    for text_value, color in left_lines:
+        text_surface = body_font.render(text_value, True, color)
+        screen.blit(text_surface, (left_x, y))
+        y += line_gap
+
+    y = start_y
+    for text_value, color in right_lines:
+        text_surface = body_font.render(text_value, True, color)
+        text_rect = text_surface.get_rect(topright=(right_x, y))
+        screen.blit(text_surface, text_rect)
+        y += line_gap
+
+
+def run_greedy_demo(
+    env: GridCleanEnv,
+    agent: QLearningAgent,
+    cell_size: int,
+    step_delay: float,
+) -> None:
+    pygame.init()
+    pygame.display.set_caption("SweepAgent UI Demo")
+
+    title_font, body_font, small_font = load_fonts()
+
+    left_margin = WINDOW_PADDING_X
+    right_margin = WINDOW_PADDING_X
+    bottom_margin = WINDOW_PADDING_Y
+    top_margin = STATUS_PANEL_HEIGHT
+
+    width = left_margin + env.cols * cell_size + right_margin
+    height = top_margin + env.rows * cell_size + bottom_margin
+
+    screen = pygame.display.set_mode((width, height))
+    clock = pygame.time.Clock()
+
+    state = env.reset()
+    done = False
+    total_reward = 0.0
+    step_idx = 0
+    last_step_time = time.time()
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                return
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                pygame.quit()
+                return
+
+        now = time.time()
+
+        if not done and now - last_step_time >= step_delay:
+            action = agent.get_policy_action(state)
+            next_state, reward, done, _ = env.step(action)
+            state = next_state
+            total_reward += reward
+            step_idx += 1
+            last_step_time = now
+
+        screen.fill(BACKGROUND_COLOR)
+
+        draw_status_panel(
+            screen=screen,
+            env=env,
+            total_reward=total_reward,
+            step_idx=step_idx,
+            done=done,
+            width=width,
+            title_font=title_font,
+            body_font=body_font,
+            small_font=small_font,
+        )
+
+        draw_grid(
+            screen=screen,
+            env=env,
+            cell_size=cell_size,
+            top_margin=top_margin,
+            left_margin=left_margin,
+            body_font=body_font,
+        )
+
+        pygame.display.flip()
+        clock.tick(60)
+
+
+def main() -> None:
+    args = parse_args()
+
+    env = build_env(map_name=args.map_name)
+    env.map_name = args.map_name
+
+    agent = load_or_train_q_agent(
+        map_name=args.map_name,
+        num_episodes=args.episodes,
+        seed=args.seed,
+    )
+
+    run_greedy_demo(
+        env=env,
+        agent=agent,
+        cell_size=args.cell_size,
+        step_delay=args.step_delay,
+    )
+
+
+if __name__ == "__main__":
+    main()
