@@ -31,6 +31,8 @@ ROBOT_BORDER_COLOR = (29, 53, 87)
 PATH_COLOR = (64, 145, 255)
 PATH_RECENT_COLOR = (29, 78, 216)
 
+HEATMAP_COLOR = (255, 99, 71)
+
 TEXT_COLOR = (33, 37, 41)
 SUCCESS_COLOR = (25, 135, 84)
 FAIL_COLOR = (220, 53, 69)
@@ -136,6 +138,19 @@ def cell_center(
     )
 
 
+def blend_colors(
+    base_color: Tuple[int, int, int],
+    overlay_color: Tuple[int, int, int],
+    alpha: float,
+) -> Tuple[int, int, int]:
+    alpha = max(0.0, min(1.0, alpha))
+    return (
+        int(base_color[0] * (1 - alpha) + overlay_color[0] * alpha),
+        int(base_color[1] * (1 - alpha) + overlay_color[1] * alpha),
+        int(base_color[2] * (1 - alpha) + overlay_color[2] * alpha),
+    )
+
+
 def draw_grid(
     screen: pygame.Surface,
     env: GridCleanEnv,
@@ -143,11 +158,20 @@ def draw_grid(
     top_margin: int,
     left_margin: int,
     body_font: pygame.font.Font,
+    visit_counts: dict[Tuple[int, int], int],
 ) -> None:
+    max_visits = max(visit_counts.values()) if visit_counts else 0
+
     for row in range(env.rows):
         for col in range(env.cols):
             tile_type = get_tile_type(env, row, col)
-            tile_color = get_tile_color(tile_type)
+            base_color = get_tile_color(tile_type)
+
+            if tile_type != "wall":
+                visits = visit_counts.get((row, col), 0)
+                if visits > 0 and max_visits > 0:
+                    alpha = 0.15 + 0.45 * (visits / max_visits)
+                    base_color = blend_colors(base_color, HEATMAP_COLOR, alpha)
 
             rect = pygame.Rect(
                 left_margin + col * cell_size,
@@ -156,7 +180,7 @@ def draw_grid(
                 cell_size,
             )
 
-            pygame.draw.rect(screen, tile_color, rect)
+            pygame.draw.rect(screen, base_color, rect)
             pygame.draw.rect(screen, GRID_LINE_COLOR, rect, width=2)
 
             if tile_type == "charger":
@@ -360,6 +384,7 @@ def run_greedy_demo(
     last_step_time = time.time()
 
     path_history: list[Tuple[int, int]] = [env.robot_pos]
+    visit_counts: dict[Tuple[int, int], int] = {env.robot_pos: 1}
 
     while True:
         for event in pygame.event.get():
@@ -379,7 +404,9 @@ def run_greedy_demo(
             total_reward += reward
             step_idx += 1
             last_step_time = now
+
             path_history.append(env.robot_pos)
+            visit_counts[env.robot_pos] = visit_counts.get(env.robot_pos, 0) + 1
 
         screen.fill(BACKGROUND_COLOR)
 
@@ -402,6 +429,7 @@ def run_greedy_demo(
             top_margin=top_margin,
             left_margin=left_margin,
             body_font=body_font,
+            visit_counts=visit_counts,
         )
 
         draw_path_overlay(
