@@ -71,19 +71,19 @@ def draw_dropdown_box(
     rect: pygame.Rect,
     is_open: bool,
 ) -> None:
-    label_surface = fonts.body_font.render(label, True, TEXT_COLOR)
-    screen.blit(label_surface, (rect.left, rect.top - 30))
+    label_surface = fonts.small_font.render(label, True, TEXT_COLOR)
+    screen.blit(label_surface, (rect.left, rect.top - 24))
 
     box_bg = BUTTON_ACTIVE_BG if is_open else BUTTON_BG
     pygame.draw.rect(screen, box_bg, rect, border_radius=8)
     pygame.draw.rect(screen, PANEL_BORDER_COLOR, rect, width=2, border_radius=8)
 
-    value_surface = fonts.body_font.render(value, True, TEXT_COLOR)
-    value_rect = value_surface.get_rect(midleft=(rect.left + 16, rect.centery))
+    value_surface = fonts.small_font.render(value, True, TEXT_COLOR)
+    value_rect = value_surface.get_rect(midleft=(rect.left + 12, rect.centery))
     screen.blit(value_surface, value_rect)
 
-    arrow_surface = fonts.body_font.render("▲" if is_open else "▼", True, TEXT_COLOR)
-    arrow_rect = arrow_surface.get_rect(center=(rect.right - 24, rect.centery))
+    arrow_surface = fonts.small_font.render("▲" if is_open else "▼", True, TEXT_COLOR)
+    arrow_rect = arrow_surface.get_rect(center=(rect.right - 20, rect.centery))
     screen.blit(arrow_surface, arrow_rect)
 
 
@@ -94,7 +94,7 @@ def draw_dropdown_overlay(
     options: list[str],
     mouse_pos: tuple[int, int],
 ) -> list[pygame.Rect]:
-    option_height = 38
+    option_height = 34
     dropdown_rect = pygame.Rect(
         rect.left,
         rect.bottom + 8,
@@ -118,7 +118,7 @@ def draw_dropdown_overlay(
             pygame.draw.rect(screen, DROPDOWN_HOVER_BG, option_rect, border_radius=6)
 
         text_surface = fonts.small_font.render(option, True, TEXT_COLOR)
-        text_rect = text_surface.get_rect(midleft=(option_rect.left + 12, option_rect.centery))
+        text_rect = text_surface.get_rect(midleft=(option_rect.left + 10, option_rect.centery))
         screen.blit(text_surface, text_rect)
         option_rects.append(option_rect)
 
@@ -135,12 +135,26 @@ def draw_menu(
     result_view: str,
     episodes: int,
     step_delay: float,
+    train_seed: int,
+    playback_seed: int,
+    learning_rate: float,
+    discount_factor: float,
+    epsilon_start: float,
+    epsilon_decay: float,
+    epsilon_min: float,
     open_dropdown: str | None,
     buttons: list,
     map_options: list[str],
     model_options: list[str],
     episode_options: list[int],
     delay_options: list[float],
+    train_seed_options: list[int],
+    playback_seed_options: list[int],
+    learning_rate_options: list[float],
+    discount_factor_options: list[float],
+    epsilon_start_options: list[float],
+    epsilon_decay_options: list[float],
+    epsilon_min_options: list[float],
     result_view_options: list[str],
 ) -> dict[str, pygame.Rect | list[pygame.Rect]]:
     screen.fill(BACKGROUND_COLOR)
@@ -151,78 +165,131 @@ def draw_menu(
     screen.blit(title, title_rect)
 
     help_text = fonts.small_font.render(
-        "Click each box to open options. Choose map, model, result view, and start.",
+        "Choose map, algorithm, seeds, and training hyperparameters from the control panel.",
         True,
         MUTED_TEXT_COLOR,
     )
     help_rect = help_text.get_rect(center=(width // 2, 74))
     screen.blit(help_text, help_rect)
 
-    panel_rect = pygame.Rect(70, 120, width - 140, height - 190)
+    panel_rect = pygame.Rect(50, 110, width - 100, height - 180)
     pygame.draw.rect(screen, INFO_BG_COLOR, panel_rect, border_radius=12)
     pygame.draw.rect(screen, PANEL_BORDER_COLOR, panel_rect, width=2, border_radius=12)
 
-    left_x = panel_rect.left + 40
-    right_x = panel_rect.left + 520
-    row1_y = panel_rect.top + 70
-    row2_y = panel_rect.top + 200
-    row3_y = panel_rect.top + 330
+    col1_x = panel_rect.left + 32
+    col2_x = panel_rect.left + 380
+    col3_x = panel_rect.left + 728
 
-    map_rect = pygame.Rect(left_x, row1_y, 320, 46)
-    model_rect = pygame.Rect(right_x, row1_y, 320, 46)
-    episodes_rect = pygame.Rect(left_x, row2_y, 320, 46)
-    delay_rect = pygame.Rect(right_x, row2_y, 320, 46)
-    result_rect = pygame.Rect(left_x, row3_y, 320, 46)
+    row1_y = panel_rect.top + 60
+    row2_y = panel_rect.top + 150
+    row3_y = panel_rect.top + 240
+    row4_y = panel_rect.top + 330
+
+    field_w = 300
+    field_h = 42
+
+    map_rect = pygame.Rect(col1_x, row1_y, field_w, field_h)
+    model_rect = pygame.Rect(col2_x, row1_y, field_w, field_h)
+    result_rect = pygame.Rect(col3_x, row1_y, field_w, field_h)
+
+    episodes_rect = pygame.Rect(col1_x, row2_y, field_w, field_h)
+    train_seed_rect = pygame.Rect(col2_x, row2_y, field_w, field_h)
+    playback_seed_rect = pygame.Rect(col3_x, row2_y, field_w, field_h)
+
+    lr_rect = pygame.Rect(col1_x, row3_y, field_w, field_h)
+    gamma_rect = pygame.Rect(col2_x, row3_y, field_w, field_h)
+    eps_start_rect = pygame.Rect(col3_x, row3_y, field_w, field_h)
+
+    eps_decay_rect = pygame.Rect(col1_x, row4_y, field_w, field_h)
+    eps_min_rect = pygame.Rect(col2_x, row4_y, field_w, field_h)
+    delay_rect = pygame.Rect(col3_x, row4_y, field_w, field_h)
 
     draw_dropdown_box(screen, fonts, "Map", map_name, map_rect, open_dropdown == "map")
-    draw_dropdown_box(screen, fonts, "Model", model_name, model_rect, open_dropdown == "model")
-    draw_dropdown_box(screen, fonts, "Episodes", str(episodes), episodes_rect, open_dropdown == "episodes")
-    draw_dropdown_box(screen, fonts, "Playback Delay", f"{step_delay:.1f}s", delay_rect, open_dropdown == "delay")
+    draw_dropdown_box(screen, fonts, "Algorithm", model_name, model_rect, open_dropdown == "model")
     draw_dropdown_box(screen, fonts, "Result View", result_view, result_rect, open_dropdown == "result_view")
 
+    draw_dropdown_box(screen, fonts, "Episodes", str(episodes), episodes_rect, open_dropdown == "episodes")
+    draw_dropdown_box(screen, fonts, "Train Seed", str(train_seed), train_seed_rect, open_dropdown == "train_seed")
+    draw_dropdown_box(screen, fonts, "Playback Seed", str(playback_seed), playback_seed_rect, open_dropdown == "playback_seed")
+
+    draw_dropdown_box(screen, fonts, "Learning Rate", f"{learning_rate:.3f}", lr_rect, open_dropdown == "learning_rate")
+    draw_dropdown_box(screen, fonts, "Discount Factor", f"{discount_factor:.3f}", gamma_rect, open_dropdown == "discount_factor")
+    draw_dropdown_box(screen, fonts, "Epsilon Start", f"{epsilon_start:.2f}", eps_start_rect, open_dropdown == "epsilon_start")
+
+    draw_dropdown_box(screen, fonts, "Epsilon Decay", f"{epsilon_decay:.3f}", eps_decay_rect, open_dropdown == "epsilon_decay")
+    draw_dropdown_box(screen, fonts, "Epsilon Min", f"{epsilon_min:.2f}", eps_min_rect, open_dropdown == "epsilon_min")
+    draw_dropdown_box(screen, fonts, "Playback Delay", f"{step_delay:.1f}s", delay_rect, open_dropdown == "delay")
+
     notes = [
-        "q_learning: train the selected map, show logs, then switch to playback",
-        "random_baseline: skip training and directly preview a random rollout",
-        "compare_playback: show random vs learned side by side after training",
+        "q_learning: train from the selected seed and hyperparameters, then switch to playback",
+        "random_baseline: skip training and preview a random rollout directly",
+        "Large maps usually need longer training and slower epsilon decay",
     ]
-    note_y = panel_rect.top + 450
+    note_y = panel_rect.top + 455
     for note in notes:
         note_surface = fonts.small_font.render(note, True, MUTED_TEXT_COLOR)
-        screen.blit(note_surface, (panel_rect.left + 40, note_y))
+        screen.blit(note_surface, (panel_rect.left + 32, note_y))
         note_y += 24
 
     for button in buttons:
         draw_button(screen, button, fonts, mouse_pos)
 
-    map_option_rects: list[pygame.Rect] = []
-    model_option_rects: list[pygame.Rect] = []
-    episode_option_rects: list[pygame.Rect] = []
-    delay_option_rects: list[pygame.Rect] = []
-    result_option_rects: list[pygame.Rect] = []
-
-    if open_dropdown == "map":
-        map_option_rects = draw_dropdown_overlay(screen, fonts, map_rect, map_options, mouse_pos)
-    elif open_dropdown == "model":
-        model_option_rects = draw_dropdown_overlay(screen, fonts, model_rect, model_options, mouse_pos)
-    elif open_dropdown == "episodes":
-        episode_option_rects = draw_dropdown_overlay(screen, fonts, episodes_rect, [str(x) for x in episode_options], mouse_pos)
-    elif open_dropdown == "delay":
-        delay_option_rects = draw_dropdown_overlay(screen, fonts, delay_rect, [f"{x:.1f}s" for x in delay_options], mouse_pos)
-    elif open_dropdown == "result_view":
-        result_option_rects = draw_dropdown_overlay(screen, fonts, result_rect, result_view_options, mouse_pos)
-
-    return {
+    dropdown_rects = {
         "map_rect": map_rect,
         "model_rect": model_rect,
-        "episodes_rect": episodes_rect,
-        "delay_rect": delay_rect,
         "result_rect": result_rect,
-        "map_options": map_option_rects,
-        "model_options": model_option_rects,
-        "episodes_options": episode_option_rects,
-        "delay_options": delay_option_rects,
-        "result_options": result_option_rects,
+        "episodes_rect": episodes_rect,
+        "train_seed_rect": train_seed_rect,
+        "playback_seed_rect": playback_seed_rect,
+        "learning_rate_rect": lr_rect,
+        "discount_factor_rect": gamma_rect,
+        "epsilon_start_rect": eps_start_rect,
+        "epsilon_decay_rect": eps_decay_rect,
+        "epsilon_min_rect": eps_min_rect,
+        "delay_rect": delay_rect,
     }
+
+    option_rects: dict[str, list[pygame.Rect]] = {
+        "map_options": [],
+        "model_options": [],
+        "result_options": [],
+        "episodes_options": [],
+        "train_seed_options": [],
+        "playback_seed_options": [],
+        "learning_rate_options": [],
+        "discount_factor_options": [],
+        "epsilon_start_options": [],
+        "epsilon_decay_options": [],
+        "epsilon_min_options": [],
+        "delay_options": [],
+    }
+
+    if open_dropdown == "map":
+        option_rects["map_options"] = draw_dropdown_overlay(screen, fonts, map_rect, map_options, mouse_pos)
+    elif open_dropdown == "model":
+        option_rects["model_options"] = draw_dropdown_overlay(screen, fonts, model_rect, model_options, mouse_pos)
+    elif open_dropdown == "result_view":
+        option_rects["result_options"] = draw_dropdown_overlay(screen, fonts, result_rect, result_view_options, mouse_pos)
+    elif open_dropdown == "episodes":
+        option_rects["episodes_options"] = draw_dropdown_overlay(screen, fonts, episodes_rect, [str(x) for x in episode_options], mouse_pos)
+    elif open_dropdown == "train_seed":
+        option_rects["train_seed_options"] = draw_dropdown_overlay(screen, fonts, train_seed_rect, [str(x) for x in train_seed_options], mouse_pos)
+    elif open_dropdown == "playback_seed":
+        option_rects["playback_seed_options"] = draw_dropdown_overlay(screen, fonts, playback_seed_rect, [str(x) for x in playback_seed_options], mouse_pos)
+    elif open_dropdown == "learning_rate":
+        option_rects["learning_rate_options"] = draw_dropdown_overlay(screen, fonts, lr_rect, [f"{x:.3f}" for x in learning_rate_options], mouse_pos)
+    elif open_dropdown == "discount_factor":
+        option_rects["discount_factor_options"] = draw_dropdown_overlay(screen, fonts, gamma_rect, [f"{x:.3f}" for x in discount_factor_options], mouse_pos)
+    elif open_dropdown == "epsilon_start":
+        option_rects["epsilon_start_options"] = draw_dropdown_overlay(screen, fonts, eps_start_rect, [f"{x:.2f}" for x in epsilon_start_options], mouse_pos)
+    elif open_dropdown == "epsilon_decay":
+        option_rects["epsilon_decay_options"] = draw_dropdown_overlay(screen, fonts, eps_decay_rect, [f"{x:.3f}" for x in epsilon_decay_options], mouse_pos)
+    elif open_dropdown == "epsilon_min":
+        option_rects["epsilon_min_options"] = draw_dropdown_overlay(screen, fonts, eps_min_rect, [f"{x:.2f}" for x in epsilon_min_options], mouse_pos)
+    elif open_dropdown == "delay":
+        option_rects["delay_options"] = draw_dropdown_overlay(screen, fonts, delay_rect, [f"{x:.1f}s" for x in delay_options], mouse_pos)
+
+    return {**dropdown_rects, **option_rects}
 
 
 def draw_progress_bar(

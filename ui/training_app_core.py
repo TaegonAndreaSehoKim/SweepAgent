@@ -25,15 +25,24 @@ RESULT_VIEW_OPTIONS = [
     "compare_playback",
 ]
 
-EPISODE_OPTIONS = [500, 1000, 2000, 3000, 5000]
+EPISODE_OPTIONS = [1000, 3000, 5000, 10000, 20000, 50000]
+TRAIN_SEED_OPTIONS = [11, 22, 33, 42, 43, 99]
+PLAYBACK_SEED_OPTIONS = [11, 22, 33, 42, 43, 99]
+
 STEP_DELAY_OPTIONS = [0.1, 0.2, 0.3, 0.5, 0.8]
+
+LEARNING_RATE_OPTIONS = [0.03, 0.05, 0.10, 0.20]
+DISCOUNT_FACTOR_OPTIONS = [0.95, 0.99, 0.995]
+EPSILON_START_OPTIONS = [0.80, 1.00]
+EPSILON_DECAY_OPTIONS = [0.995, 0.997, 0.999]
+EPSILON_MIN_OPTIONS = [0.03, 0.05, 0.10]
 
 TRAINING_LINE_PATTERN = re.compile(
     r"Episode\s+(\d+)/(\d+)\s+\|\s+avg_reward=([-\d.]+)\s+\|\s+avg_cleaned_ratio=([\d.]+)%\s+\|\s+success_rate=([\d.]+)%\s+\|\s+epsilon=([\d.]+)"
 )
 
-MENU_WIDTH = 1040
-MENU_HEIGHT = 820
+MENU_WIDTH = 1160
+MENU_HEIGHT = 980
 
 PLAYBACK_TITLE_AREA_HEIGHT = 72
 PLAYBACK_CONTROL_BAR_HEIGHT = 72
@@ -75,7 +84,7 @@ SCROLL_THUMB = (173, 181, 189)
 ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
     "q_learning": {
         "learning_rate": 0.10,
-        "discount_factor": 0.95,
+        "discount_factor": 0.99,
         "epsilon_start": 1.00,
         "epsilon_decay": 0.995,
         "epsilon_min": 0.05,
@@ -226,14 +235,10 @@ def build_training_command(
     seed: int,
     algorithm_params: dict[str, float] | None = None,
 ) -> list[str]:
-    """
-    Build the subprocess command for the selected training algorithm.
+    algorithm_params = algorithm_params or {}
 
-    For now, keep the runtime path stable and do not forward UI hyperparameters
-    until train_q_learning.py explicitly supports those CLI options.
-    """
     if algorithm_name == "q_learning":
-        return [
+        command = [
             sys.executable,
             "scripts/train_q_learning.py",
             "--map-name",
@@ -245,6 +250,19 @@ def build_training_command(
             "--print-every",
             "100",
         ]
+
+        if "learning_rate" in algorithm_params:
+            command.extend(["--learning-rate", str(algorithm_params["learning_rate"])])
+        if "discount_factor" in algorithm_params:
+            command.extend(["--discount-factor", str(algorithm_params["discount_factor"])])
+        if "epsilon_start" in algorithm_params:
+            command.extend(["--epsilon-start", str(algorithm_params["epsilon_start"])])
+        if "epsilon_decay" in algorithm_params:
+            command.extend(["--epsilon-decay", str(algorithm_params["epsilon_decay"])])
+        if "epsilon_min" in algorithm_params:
+            command.extend(["--epsilon-min", str(algorithm_params["epsilon_min"])])
+
+        return command
 
     raise ValueError(f"Unsupported training algorithm: {algorithm_name}")
 
@@ -269,8 +287,3 @@ def compute_training_window_height() -> int:
         + TRAINING_BOTTOM_ACTION_HEIGHT
         + TRAINING_BOTTOM_MARGIN
     )
-
-
-def get_checkpoint_path(map_name: str, seed: int) -> Path:
-    """Return the q-learning checkpoint file path used by the training script."""
-    return PROJECT_ROOT / "outputs" / "checkpoints" / f"q_learning_agent_{map_name}_seed_{seed}.json"

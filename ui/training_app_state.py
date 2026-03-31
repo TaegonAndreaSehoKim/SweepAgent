@@ -16,6 +16,8 @@ class MenuSelection:
     result_view: str = "single_playback"
     episodes: int = 5000
     step_delay: float = 0.5
+    train_seed: int = 42
+    playback_seed: int = 42
     algorithm_params: dict[str, float] = field(default_factory=lambda: get_default_algorithm_params("q_learning"))
     open_dropdown: str | None = None
 

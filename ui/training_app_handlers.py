@@ -3,13 +3,12 @@ from __future__ import annotations
 import random
 import time
 
-from utils.experiment_utils import build_env, load_or_train_q_agent
+from utils.experiment_utils import build_env, get_checkpoint_path, load_or_train_q_agent
 from utils.ui_utils import reset_panel_state
 from ui.training_app_core import (
     PREVIEW_STEP_INTERVAL_SEC,
     TRAINING_LINE_PATTERN,
     build_training_command,
-    get_checkpoint_path,
     is_trainable_algorithm,
 )
 from ui.training_app_state import (

@@ -23,16 +23,23 @@ from utils.ui_utils import (
 from ui.training_app_core import (
     Button,
     CLEANED_FILL,
+    DISCOUNT_FACTOR_OPTIONS,
     EPISODE_OPTIONS,
+    EPSILON_DECAY_OPTIONS,
+    EPSILON_MIN_OPTIONS,
+    EPSILON_START_OPTIONS,
     EPSILON_FILL,
+    LEARNING_RATE_OPTIONS,
     MENU_HEIGHT,
     MENU_WIDTH,
     MODEL_OPTIONS,
+    PLAYBACK_SEED_OPTIONS,
     PLAYBACK_TOP_RESERVED,
     PROGRESS_FILL,
     RESULT_VIEW_OPTIONS,
     STEP_DELAY_OPTIONS,
     SUCCESS_FILL,
+    TRAIN_SEED_OPTIONS,
     PreviewPolicy,
     clamp_step_delay,
     compute_training_window_height,
@@ -93,6 +100,8 @@ def main() -> None:
         result_view="single_playback",
         episodes=5000,
         step_delay=0.5,
+        train_seed=args.seed,
+        playback_seed=args.random_seed,
         algorithm_params=get_default_algorithm_params("q_learning"),
     )
 
@@ -111,7 +120,7 @@ def main() -> None:
         preview_state=preview,
         menu=menu,
         preview_policy_cls=PreviewPolicy,
-        seed=args.seed,
+        seed=menu.train_seed,
     )
 
     def back_to_menu() -> None:
@@ -125,10 +134,12 @@ def main() -> None:
 
     def restart_single_playback() -> None:
         from utils.ui_utils import reset_panel_state
+        import random
 
         if single_playback.env is None:
             return
 
+        single_playback.rng = random.Random(menu.playback_seed)
         (
             single_playback.state,
             single_playback.done,
@@ -146,9 +157,12 @@ def main() -> None:
 
     def restart_compare_playback() -> None:
         from utils.ui_utils import reset_panel_state
+        import random
 
         if compare_playback.random_env is None or compare_playback.learned_env is None:
             return
+
+        compare_playback.rng = random.Random(menu.playback_seed)
 
         (
             compare_playback.random_state,
@@ -184,9 +198,9 @@ def main() -> None:
 
         menu_buttons = [
             ui_button(
-                x=390,
-                y=720,
-                w=260,
+                x=430,
+                y=MENU_HEIGHT - 80,
+                w=300,
                 h=54,
                 label="Start Training" if menu.algorithm_name != "random_baseline" else "Start Preview",
                 on_click=lambda: None,
@@ -230,8 +244,8 @@ def main() -> None:
                 training=training,
                 single_playback=single_playback,
                 compare_playback=compare_playback,
-                train_seed=args.seed,
-                random_seed=args.random_seed,
+                train_seed=menu.train_seed,
+                random_seed=menu.playback_seed,
             )
             if next_state is not None:
                 app_state = next_state
@@ -241,7 +255,7 @@ def main() -> None:
                 preview=preview,
                 menu=menu,
                 preview_policy_cls=PreviewPolicy,
-                seed=args.seed,
+                seed=menu.train_seed,
             )
 
         if app_state == "playback_single":
@@ -264,12 +278,26 @@ def main() -> None:
                 result_view=menu.result_view,
                 episodes=menu.episodes,
                 step_delay=menu.step_delay,
+                train_seed=menu.train_seed,
+                playback_seed=menu.playback_seed,
+                learning_rate=menu.algorithm_params.get("learning_rate", 0.0),
+                discount_factor=menu.algorithm_params.get("discount_factor", 0.0),
+                epsilon_start=menu.algorithm_params.get("epsilon_start", 0.0),
+                epsilon_decay=menu.algorithm_params.get("epsilon_decay", 0.0),
+                epsilon_min=menu.algorithm_params.get("epsilon_min", 0.0),
                 open_dropdown=menu.open_dropdown,
                 buttons=menu_buttons,
                 map_options=list(MAP_PRESETS.keys()),
                 model_options=MODEL_OPTIONS,
                 episode_options=EPISODE_OPTIONS,
                 delay_options=STEP_DELAY_OPTIONS,
+                train_seed_options=TRAIN_SEED_OPTIONS,
+                playback_seed_options=PLAYBACK_SEED_OPTIONS,
+                learning_rate_options=LEARNING_RATE_OPTIONS,
+                discount_factor_options=DISCOUNT_FACTOR_OPTIONS,
+                epsilon_start_options=EPSILON_START_OPTIONS,
+                epsilon_decay_options=EPSILON_DECAY_OPTIONS,
+                epsilon_min_options=EPSILON_MIN_OPTIONS,
                 result_view_options=RESULT_VIEW_OPTIONS,
             )
 
@@ -285,8 +313,8 @@ def main() -> None:
                             single_playback=single_playback,
                             compare_playback=compare_playback,
                             preview_policy_cls=PreviewPolicy,
-                            train_seed=args.seed,
-                            random_seed=args.random_seed,
+                            train_seed=menu.train_seed,
+                            random_seed=menu.playback_seed,
                         )
                         handled = True
                         break
@@ -295,9 +323,16 @@ def main() -> None:
                     dropdown_boxes = {
                         "map": dropdown_ui["map_rect"],
                         "model": dropdown_ui["model_rect"],
-                        "episodes": dropdown_ui["episodes_rect"],
-                        "delay": dropdown_ui["delay_rect"],
                         "result_view": dropdown_ui["result_rect"],
+                        "episodes": dropdown_ui["episodes_rect"],
+                        "train_seed": dropdown_ui["train_seed_rect"],
+                        "playback_seed": dropdown_ui["playback_seed_rect"],
+                        "learning_rate": dropdown_ui["learning_rate_rect"],
+                        "discount_factor": dropdown_ui["discount_factor_rect"],
+                        "epsilon_start": dropdown_ui["epsilon_start_rect"],
+                        "epsilon_decay": dropdown_ui["epsilon_decay_rect"],
+                        "epsilon_min": dropdown_ui["epsilon_min_rect"],
+                        "delay": dropdown_ui["delay_rect"],
                     }
 
                     for key, rect in dropdown_boxes.items():
@@ -310,9 +345,16 @@ def main() -> None:
                     option_key = {
                         "map": "map_options",
                         "model": "model_options",
-                        "episodes": "episodes_options",
-                        "delay": "delay_options",
                         "result_view": "result_options",
+                        "episodes": "episodes_options",
+                        "train_seed": "train_seed_options",
+                        "playback_seed": "playback_seed_options",
+                        "learning_rate": "learning_rate_options",
+                        "discount_factor": "discount_factor_options",
+                        "epsilon_start": "epsilon_start_options",
+                        "epsilon_decay": "epsilon_decay_options",
+                        "epsilon_min": "epsilon_min_options",
+                        "delay": "delay_options",
                     }[menu.open_dropdown]
 
                     option_rects = dropdown_ui[option_key]
@@ -327,17 +369,38 @@ def main() -> None:
                                         preview_state=preview,
                                         menu=menu,
                                         preview_policy_cls=PreviewPolicy,
-                                        seed=args.seed,
+                                        seed=menu.train_seed,
                                     )
                                 elif menu.open_dropdown == "model":
                                     menu.algorithm_name = MODEL_OPTIONS[idx]
                                     menu.algorithm_params = get_default_algorithm_params(menu.algorithm_name)
-                                elif menu.open_dropdown == "episodes":
-                                    menu.episodes = EPISODE_OPTIONS[idx]
-                                elif menu.open_dropdown == "delay":
-                                    menu.step_delay = STEP_DELAY_OPTIONS[idx]
                                 elif menu.open_dropdown == "result_view":
                                     menu.result_view = RESULT_VIEW_OPTIONS[idx]
+                                elif menu.open_dropdown == "episodes":
+                                    menu.episodes = EPISODE_OPTIONS[idx]
+                                elif menu.open_dropdown == "train_seed":
+                                    menu.train_seed = TRAIN_SEED_OPTIONS[idx]
+                                    rebuild_training_preview_env(
+                                        preview_state=preview,
+                                        menu=menu,
+                                        preview_policy_cls=PreviewPolicy,
+                                        seed=menu.train_seed,
+                                    )
+                                elif menu.open_dropdown == "playback_seed":
+                                    menu.playback_seed = PLAYBACK_SEED_OPTIONS[idx]
+                                elif menu.open_dropdown == "learning_rate":
+                                    menu.algorithm_params["learning_rate"] = LEARNING_RATE_OPTIONS[idx]
+                                elif menu.open_dropdown == "discount_factor":
+                                    menu.algorithm_params["discount_factor"] = DISCOUNT_FACTOR_OPTIONS[idx]
+                                elif menu.open_dropdown == "epsilon_start":
+                                    menu.algorithm_params["epsilon_start"] = EPSILON_START_OPTIONS[idx]
+                                elif menu.open_dropdown == "epsilon_decay":
+                                    menu.algorithm_params["epsilon_decay"] = EPSILON_DECAY_OPTIONS[idx]
+                                elif menu.open_dropdown == "epsilon_min":
+                                    menu.algorithm_params["epsilon_min"] = EPSILON_MIN_OPTIONS[idx]
+                                elif menu.open_dropdown == "delay":
+                                    menu.step_delay = STEP_DELAY_OPTIONS[idx]
+
                                 menu.open_dropdown = None
                                 handled = True
                                 break
