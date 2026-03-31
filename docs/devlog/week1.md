@@ -63,13 +63,6 @@ Results:
 The environment is now fully playable and produces stable episode results.  
 The random baseline performs better than expected because the current map is small and the step budget is generous. This means the environment is working, but I may need to increase difficulty later so that improvements from Q-learning are more visible.
 
-### Next steps
-For Day 2, I planned to:
-- implement a Q-learning agent
-- train it with epsilon-greedy exploration
-- compare Q-learning against the random baseline
-- visualize learning progress with reward and cleaning performance curves
-
 ## Day 2 - Q-Learning Training, Evaluation, and Visualization
 
 Today I implemented the first learning-based agent for SweepAgent using tabular Q-learning and confirmed that it significantly outperforms the random baseline.
@@ -113,12 +106,6 @@ Learned greedy policy over 100 episodes:
 - Average cleaned ratio: `100.00%`
 - Success rate: `100.00%`
 
-Improvement over the random baseline:
-- Reward gain: `170.03`
-- Step reduction: `57.58`
-- Cleaned ratio gain: `9.00 percentage points`
-- Success rate gain: `21.00 percentage points`
-
 ### Comparison on the harder map
 Random baseline over 100 episodes:
 - Average reward: `-300.97`
@@ -137,19 +124,8 @@ The project now includes two GIF-based visual outputs:
 - `outputs/gifs/learned_policy_harder.gif`
 - `outputs/gifs/comparison_harder.gif`
 
-These visualizations make it much easier to inspect the learned behavior and compare it directly against the random baseline.
-
 ### Takeaway
-The default map already showed that Q-learning learns a much more efficient cleaning strategy than a random walk.
-
-The harder map made the difference even clearer: the random policy almost always failed, while the learned policy solved the task consistently. At this stage, SweepAgent is now demonstrating clear reinforcement learning behavior, meaningful baseline improvement, and visual policy playback.
-
-### Next steps
-For the next stage, I planned to:
-- test more room layouts
-- organize experiment outputs more cleanly
-- improve README documentation with figures and GIF previews
-- explore additional environment difficulty settings and evaluation scenarios
+The harder map made the difference even clearer: the random policy almost always failed, while the learned policy solved the task consistently.
 
 ## Day 3 - Multi-Map Benchmarking and Result Visualization
 
@@ -182,33 +158,8 @@ The random baseline performed much worse, especially as map difficulty increased
 - `wide_room`: 18.00%
 - `corridor`: 5.00%
 
-The learned policy also remained much more efficient:
-- `default`: 7.00 average steps
-- `harder`: 18.00 average steps
-- `wide_room`: 14.00 average steps
-- `corridor`: 20.00 average steps
-
-In contrast, the random baseline required far more steps and often failed to complete the task.
-
-### Output files
-Saved benchmark outputs:
-- `outputs/logs/map_benchmark_results.csv`
-- `outputs/plots/map_benchmark_success_rate.png`
-- `outputs/plots/map_benchmark_reward.png`
-- `outputs/plots/map_benchmark_steps.png`
-- `outputs/plots/map_benchmark_cleaned_ratio.png`
-
 ### Takeaway
-This stage makes SweepAgent look much more like a real RL project rather than a single-environment demo.
-
-The learned agent no longer just performs well on one small room. It now shows consistent performance across multiple layouts, with clear advantages over the random baseline in completion, reward, and efficiency.
-
-### Next steps
-For the next stage, I planned to:
-- improve README presentation with benchmark figures
-- organize outputs more cleanly
-- try additional room layouts
-- explore more challenging environment settings
+This stage made SweepAgent look much more like a real RL project rather than a single-environment demo.
 
 ## Day 4 - Experiment Pipeline Refactor and Checkpoint Reuse
 
@@ -226,63 +177,8 @@ Today I refactored the experiment workflow so that training, comparison, renderi
 - Updated `scripts/benchmark_maps.py` to use shared experiment utilities
 - Updated `scripts/train_q_learning.py` to save map-specific checkpoints and map-specific training plots
 
-### Why this matters
-Previously, several scripts retrained the Q-learning agent every time they were run.  
-This made experiments slower and introduced unnecessary duplication across scripts.
-
-With the new structure:
-- trained agents are reused automatically
-- map-specific policies are stored separately
-- all experiment scripts follow the same environment and checkpoint rules
-- adding new maps is easier because the workflow is now driven by `MAP_PRESETS`
-
-### Checkpoint outputs
-The project now saves separate checkpoints for each map:
-- `outputs/checkpoints/q_learning_agent_default_seed_42.json`
-- `outputs/checkpoints/q_learning_agent_harder_seed_42.json`
-- `outputs/checkpoints/q_learning_agent_wide_room_seed_42.json`
-- `outputs/checkpoints/q_learning_agent_corridor_seed_42.json`
-
-### Updated benchmark observations
-The random baseline degraded quickly as map complexity increased, while the learned greedy Q-learning agent consistently solved every shared map preset.
-
-Observed success rates:
-- Random agent:
-  - `default`: 79%
-  - `harder`: 2%
-  - `wide_room`: 18%
-  - `corridor`: 5%
-- Learned greedy agent:
-  - `default`: 100%
-  - `harder`: 100%
-  - `wide_room`: 100%
-  - `corridor`: 100%
-
-### Generated artifacts
-- Checkpoints:
-  - `outputs/checkpoints/q_learning_agent_default_seed_42.json`
-  - `outputs/checkpoints/q_learning_agent_harder_seed_42.json`
-  - `outputs/checkpoints/q_learning_agent_wide_room_seed_42.json`
-  - `outputs/checkpoints/q_learning_agent_corridor_seed_42.json`
-- GIFs:
-  - `outputs/gifs/learned_policy_harder.gif`
-  - `outputs/gifs/comparison_harder.gif`
-- Benchmark outputs:
-  - `outputs/logs/map_benchmark_results.csv`
-  - `outputs/plots/map_benchmark_success_rate.png`
-  - `outputs/plots/map_benchmark_reward.png`
-  - `outputs/plots/map_benchmark_steps.png`
-  - `outputs/plots/map_benchmark_cleaned_ratio.png`
-
 ### Takeaway
 The project now has a reusable and scalable experiment pipeline. The codebase is cleaner, the scripts are faster to rerun, and the benchmark evidence is much easier to present.
-
-### Next steps
-For the next stage, I plan to:
-- expose script settings through CLI arguments
-- improve README presentation with embedded benchmark figures
-- try additional environment variants
-- explore richer RL extensions such as battery constraints or obstacles
 
 ## Day 5 - Battery Constraints, Charging Stations, and Multi-Seed Validation
 
@@ -300,33 +196,7 @@ Today I extended SweepAgent beyond simple cleaning and added battery-aware, char
 - Updated charger-aware GIF rendering for learned policy playback and side-by-side comparison
 - Validated charger-aware behavior across multiple random seeds
 
-### Battery milestone
-The battery-constrained environment successfully increased difficulty while preserving learnability.
-
-On `battery_harder`, the learned policy was able to clean all tiles consistently, while the random baseline performed very poorly. This confirmed that battery-aware state tracking was working correctly and that the learned agent could adapt its policy to a tighter movement budget.
-
-### Charging behavior milestone
-The first goal for charging was not to make charging absolutely mandatory, but to make the learned policy actually use a charger during rollout.
-
-This was achieved with `charging_demo`. The learned policy:
-- moved to a charger during the episode
-- restored its battery
-- continued cleaning after recharge
-- finished the full cleaning task successfully
-
-This was the first stage where SweepAgent learned behavior that goes beyond direct cleaning and starts to resemble resource-aware planning.
-
 ### Charge-required validation
-After confirming charger usage on `charging_demo`, I moved to a harder map called `charge_required_v2`.
-
-This map required more careful route planning under battery limits. Early versions were unstable, so I refined:
-- map layout
-- battery capacity
-- battery-aware shaping
-- recharge-related reward shaping
-
-The final version was validated with multiple seeds.
-
 Evaluation over 100 episodes showed:
 
 - Seed 11:
@@ -349,22 +219,59 @@ Evaluation over 100 episodes showed:
 
 The random baseline remained at 0% success rate on the same map.
 
-### Generated artifacts
-New charger-aware outputs include:
-- `outputs/gifs/learned_policy_charging_demo.gif`
-- `outputs/gifs/comparison_charging_demo.gif`
-- `outputs/gifs/learned_policy_charge_required_v2.gif`
-- `outputs/gifs/comparison_charge_required_v2.gif`
-- `outputs/checkpoints/q_learning_agent_battery_harder_seed_42.json`
-- `outputs/checkpoints/q_learning_agent_charging_demo_seed_42.json`
-- `outputs/checkpoints/q_learning_agent_charge_required_v2_seed_42.json`
-
 ### Takeaway
 This was the first stage where SweepAgent clearly demonstrated charger-aware reinforcement learning behavior.
 
-The project now goes beyond basic path efficiency:
-- it can manage battery limits
-- it can use charging stations mid-episode
-- it can solve a charger-dependent map reliably across multiple seeds
+## Day 6 - Program-Based UI Visualization and App Refactor
 
-At this point, the next natural step is no longer environment basics. The project is ready to move toward richer interaction and presentation, such as program-based UI visualization or dynamic obstacle scenarios.
+Today I moved SweepAgent beyond offline plots and GIFs and started building a program-based interactive UI.
+
+### What I completed
+- Added an initial pygame-based UI runner in `scripts/run_training_app.py`
+- Added menu-based map, model, episode, and playback-delay selection
+- Added training screen with:
+  - live log panel
+  - training snapshot bars
+  - mini rollout preview
+- Added playback screens for:
+  - single playback
+  - side-by-side compare playback
+- Improved playback layout so headers, controls, and info panels no longer overlap
+- Added responsive behavior so the training screen uses a taller window while playback screens still size to content
+- Refactored the UI into separate modules:
+  - `ui/training_app_core.py`
+  - `ui/training_app_state.py`
+  - `ui/training_app_handlers.py`
+  - `ui/training_app_views.py`
+
+### Why this mattered
+Before this stage, SweepAgent mainly relied on terminal output, saved plots, and GIF rendering.
+
+With the program-based UI:
+- the user can choose experiment settings without editing scripts
+- training progress can be monitored live
+- playback can be controlled interactively
+- the project now feels closer to a real interactive ML demo
+
+### Current UI status
+The UI already supports:
+- menu selection for map / model / result mode
+- q-learning training launch from the app
+- live training log display
+- mini preview during training
+- single playback mode
+- compare playback mode
+- pause / resume / restart / slower / faster controls
+
+The main remaining work is stabilization and cleanup after the refactor, not initial feature creation.
+
+### Takeaway
+This was an important presentation milestone.  
+SweepAgent is no longer just a script-based RL project. It now has the foundation of an interactive application layer, which makes the learned behavior much easier to inspect and demonstrate.
+
+### Next steps
+For the next stage, I plan to:
+- stabilize the refactored training app
+- improve state management further
+- polish compare playback UX
+- add richer in-app training charts
