@@ -8,8 +8,9 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import pygame
 
@@ -24,7 +25,6 @@ from utils.ui_utils import (
     INFO_BG_COLOR,
     MUTED_TEXT_COLOR,
     PANEL_BORDER_COLOR,
-    PANEL_GAP,
     TEXT_COLOR,
     TOP_PANEL_HEIGHT,
     WINDOW_PADDING_X,
@@ -37,7 +37,7 @@ from utils.ui_utils import (
     compute_bottom_info_height,
     compute_panel_layout,
     draw_bottom_info,
-    draw_compare_panel,
+    draw_single_panel,
     draw_top_controls,
     get_hover_info,
     load_fonts,
@@ -56,17 +56,21 @@ TRAINING_LINE_PATTERN = re.compile(
     r"Episode\s+(\d+)/(\d+)\s+\|\s+avg_reward=([-\d.]+)\s+\|\s+avg_cleaned_ratio=([\d.]+)%\s+\|\s+success_rate=([\d.]+)%\s+\|\s+epsilon=([\d.]+)"
 )
 
+BUTTON_BG = (255, 255, 255)
+BUTTON_HOVER_BG = (240, 244, 248)
+BUTTON_ACTIVE_BG = (230, 239, 255)
+PRIMARY_BUTTON_BG = (58, 134, 255)
+PRIMARY_BUTTON_HOVER_BG = (47, 117, 223)
+PRIMARY_BUTTON_TEXT = (255, 255, 255)
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the SweepAgent training app.")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--random-seed", type=int, default=42)
-    parser.add_argument("--cell-size", type=int, default=64)
-    return parser.parse_args()
 
-
-def clamp_step_delay(value: float) -> float:
-    return max(MIN_STEP_DELAY, min(MAX_STEP_DELAY, value))
+@dataclass
+class Button:
+    rect: pygame.Rect
+    label: str
+    on_click: Callable[[], None]
+    primary: bool = False
+    enabled: bool = True
 
 
 class TrainingRunner:
@@ -128,39 +132,80 @@ class TrainingRunner:
             self.process.terminate()
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the SweepAgent training app.")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--random-seed", type=int, default=42)
+    parser.add_argument("--cell-size", type=int, default=64)
+    return parser.parse_args()
+
+
+def clamp_step_delay(value: float) -> float:
+    return max(MIN_STEP_DELAY, min(MAX_STEP_DELAY, value))
+
+
+def next_index(current: int, total: int, delta: int) -> int:
+    return (current + delta) % total
+
+
+def draw_button(
+    screen: pygame.Surface,
+    button: Button,
+    fonts,
+    mouse_pos: tuple[int, int],
+) -> None:
+    hovered = button.rect.collidepoint(mouse_pos) and button.enabled
+
+    if button.primary:
+        bg = PRIMARY_BUTTON_HOVER_BG if hovered else PRIMARY_BUTTON_BG
+        text_color = PRIMARY_BUTTON_TEXT
+    else:
+        bg = BUTTON_HOVER_BG if hovered else BUTTON_BG
+        text_color = TEXT_COLOR if button.enabled else MUTED_TEXT_COLOR
+
+    pygame.draw.rect(screen, bg, button.rect, border_radius=10)
+    pygame.draw.rect(screen, PANEL_BORDER_COLOR, button.rect, width=2, border_radius=10)
+
+    text_surface = fonts.small_font.render(button.label, True, text_color)
+    text_rect = text_surface.get_rect(center=button.rect.center)
+    screen.blit(text_surface, text_rect)
+
+
 def draw_menu(
     screen: pygame.Surface,
     width: int,
     height: int,
     fonts,
-    selected_index: int,
     map_name: str,
     model_name: str,
     episodes: int,
     step_delay: float,
+    buttons: list[Button],
+    row_arrow_rects: list[tuple[pygame.Rect, pygame.Rect]],
 ) -> None:
     screen.fill(BACKGROUND_COLOR)
+    mouse_pos = pygame.mouse.get_pos()
 
     title = fonts.title_font.render("SweepAgent Training App", True, TEXT_COLOR)
-    title_rect = title.get_rect(center=(width // 2, 40))
+    title_rect = title.get_rect(center=(width // 2, 42))
     screen.blit(title, title_rect)
 
     help_text = fonts.small_font.render(
-        "UP/DOWN: move  LEFT/RIGHT: change option  ENTER: start  ESC: quit",
+        "Click arrows to change options, then start training or preview.",
         True,
-        TEXT_COLOR,
+        MUTED_TEXT_COLOR,
     )
-    help_rect = help_text.get_rect(center=(width // 2, 72))
+    help_rect = help_text.get_rect(center=(width // 2, 74))
     screen.blit(help_text, help_rect)
 
     panel_rect = pygame.Rect(
-        80,
+        70,
         120,
-        width - 160,
-        height - 220,
+        width - 140,
+        height - 210,
     )
-    pygame.draw.rect(screen, INFO_BG_COLOR, panel_rect, border_radius=10)
-    pygame.draw.rect(screen, PANEL_BORDER_COLOR, panel_rect, width=2, border_radius=10)
+    pygame.draw.rect(screen, INFO_BG_COLOR, panel_rect, border_radius=12)
+    pygame.draw.rect(screen, PANEL_BORDER_COLOR, panel_rect, width=2, border_radius=12)
 
     items = [
         ("Map", map_name),
@@ -169,26 +214,46 @@ def draw_menu(
         ("Playback Delay", f"{step_delay:.1f}s"),
     ]
 
-    y = panel_rect.top + 40
-    for idx, (label, value) in enumerate(items):
-        color = TEXT_COLOR if idx == selected_index else MUTED_TEXT_COLOR
-        prefix = ">" if idx == selected_index else " "
-        line = f"{prefix} {label}: {value}"
-        surface = fonts.body_font.render(line, True, color)
-        screen.blit(surface, (panel_rect.left + 40, y))
-        y += 50
+    row_top = panel_rect.top + 34
+    row_gap = 64
 
-    tips = [
-        "q_learning: train selected map, then auto-play the learned policy",
+    for idx, ((label, value), (left_rect, right_rect)) in enumerate(zip(items, row_arrow_rects)):
+        y = row_top + idx * row_gap
+
+        label_surface = fonts.body_font.render(label, True, TEXT_COLOR)
+        screen.blit(label_surface, (panel_rect.left + 28, y + 8))
+
+        value_box = pygame.Rect(panel_rect.left + 280, y, 360, 42)
+        pygame.draw.rect(screen, BUTTON_ACTIVE_BG, value_box, border_radius=8)
+        pygame.draw.rect(screen, PANEL_BORDER_COLOR, value_box, width=2, border_radius=8)
+
+        value_surface = fonts.body_font.render(value, True, TEXT_COLOR)
+        value_rect = value_surface.get_rect(center=value_box.center)
+        screen.blit(value_surface, value_rect)
+
+        for rect, text in ((left_rect, "<"), (right_rect, ">")):
+            hovered = rect.collidepoint(mouse_pos)
+            bg = BUTTON_HOVER_BG if hovered else BUTTON_BG
+            pygame.draw.rect(screen, bg, rect, border_radius=8)
+            pygame.draw.rect(screen, PANEL_BORDER_COLOR, rect, width=2, border_radius=8)
+
+            arrow_surface = fonts.body_font.render(text, True, TEXT_COLOR)
+            arrow_rect = arrow_surface.get_rect(center=rect.center)
+            screen.blit(arrow_surface, arrow_rect)
+
+    notes = [
+        "q_learning: train the selected map, then auto-play the learned policy",
         "random_baseline: skip training and directly preview a random rollout",
-        "This is the first app-style UI stage for SweepAgent.",
+        "This is the first click-based app UI stage for SweepAgent.",
     ]
+    note_y = panel_rect.top + 308
+    for note in notes:
+        note_surface = fonts.small_font.render(note, True, MUTED_TEXT_COLOR)
+        screen.blit(note_surface, (panel_rect.left + 28, note_y))
+        note_y += 24
 
-    y += 20
-    for tip in tips:
-        surface = fonts.small_font.render(tip, True, MUTED_TEXT_COLOR)
-        screen.blit(surface, (panel_rect.left + 40, y))
-        y += 24
+    for button in buttons:
+        draw_button(screen, button, fonts, mouse_pos)
 
 
 def draw_training_screen(
@@ -201,8 +266,10 @@ def draw_training_screen(
     episodes: int,
     latest_metrics: dict[str, str],
     log_lines: list[str],
+    buttons: list[Button],
 ) -> None:
     screen.fill(BACKGROUND_COLOR)
+    mouse_pos = pygame.mouse.get_pos()
 
     title = fonts.title_font.render("Training in Progress", True, TEXT_COLOR)
     screen.blit(title, (WINDOW_PADDING_X, 20))
@@ -226,13 +293,13 @@ def draw_training_screen(
         f"Epsilon: {latest_metrics.get('epsilon', '-')}",
     ]
 
-    y = metrics_panel.top + 18
+    y = metrics_panel.top + 16
     for text in metric_texts:
         surface = fonts.body_font.render(text, True, TEXT_COLOR)
         screen.blit(surface, (metrics_panel.left + 18, y))
         y += 20
 
-    logs_panel = pygame.Rect(24, 236, width - 48, height - 260)
+    logs_panel = pygame.Rect(24, 236, width - 48, height - 330)
     pygame.draw.rect(screen, INFO_BG_COLOR, logs_panel, border_radius=10)
     pygame.draw.rect(screen, PANEL_BORDER_COLOR, logs_panel, width=2, border_radius=10)
 
@@ -240,11 +307,14 @@ def draw_training_screen(
     screen.blit(logs_title, (logs_panel.left + 16, logs_panel.top + 12))
 
     y = logs_panel.top + 46
-    visible_lines = log_lines[-18:]
+    visible_lines = log_lines[-16:]
     for line in visible_lines:
         surface = fonts.small_font.render(line, True, MUTED_TEXT_COLOR)
         screen.blit(surface, (logs_panel.left + 16, y))
         y += 18
+
+    for button in buttons:
+        draw_button(screen, button, fonts, mouse_pos)
 
 
 def draw_playback_screen(
@@ -262,8 +332,10 @@ def draw_playback_screen(
     visit_counts: Dict[Tuple[int, int], int],
     path_history: List[Tuple[int, int]],
     cell_size: int,
+    buttons: list[Button],
 ) -> None:
     screen.fill(BACKGROUND_COLOR)
+    mouse_pos = pygame.mouse.get_pos()
 
     draw_top_controls(
         screen=screen,
@@ -293,36 +365,34 @@ def draw_playback_screen(
         fonts=fonts,
         left_lines=left_lines,
         right_lines=right_lines,
-        title_text=title_text,
+        title_text="SweepAgent UI Demo",
         subtitle_text=None,
     )
-
-    bottom_info_height = compute_bottom_info_height(fonts)
 
     panel_left = (width - layout.panel_width) // 2
     panel_top = TOP_PANEL_HEIGHT
 
-    grid_rect = draw_compare_panel(
+    grid_rect = draw_single_panel(
         screen=screen,
-        panel_title=title_text,
         env=env,
         total_reward=total_reward,
         step_idx=step_idx,
         done=done,
+        is_paused=is_paused,
+        step_delay=step_delay,
         visit_counts=visit_counts,
         path_history=path_history,
         panel_left=panel_left,
         panel_top=panel_top,
         cell_size=cell_size,
         fonts=fonts,
-    )[0]
+    )
 
-    mouse_pos = pygame.mouse.get_pos()
     hover_lines = get_hover_info(
         env=env,
         visit_counts=visit_counts,
         grid_rect=grid_rect,
-        mouse_pos=mouse_pos,
+        mouse_pos=pygame.mouse.get_pos(),
         cell_size=cell_size,
     )
     hover_title = f"Hover: {title_text}" if hover_lines is not None else None
@@ -334,8 +404,11 @@ def draw_playback_screen(
         fonts=fonts,
         hover_title=hover_title,
         hover_lines=hover_lines,
-        bottom_info_height=bottom_info_height,
+        bottom_info_height=compute_bottom_info_height(fonts),
     )
+
+    for button in buttons:
+        draw_button(screen, button, fonts, mouse_pos)
 
 
 def main() -> None:
@@ -351,10 +424,9 @@ def main() -> None:
     model_idx = 0
     episodes_idx = EPISODE_OPTIONS.index(5000) if 5000 in EPISODE_OPTIONS else 0
     step_delay_idx = STEP_DELAY_OPTIONS.index(0.5) if 0.5 in STEP_DELAY_OPTIONS else 0
-    selected_menu_idx = 0
 
     menu_width = 980
-    menu_height = 620
+    menu_height = 640
 
     screen = pygame.display.set_mode((menu_width, menu_height))
     pygame.display.set_caption("SweepAgent Training App")
@@ -384,6 +456,132 @@ def main() -> None:
         current_episodes = EPISODE_OPTIONS[episodes_idx]
         current_step_delay = STEP_DELAY_OPTIONS[step_delay_idx]
 
+        def change_map(delta: int) -> None:
+            nonlocal map_idx
+            map_idx = next_index(map_idx, len(map_names), delta)
+
+        def change_model(delta: int) -> None:
+            nonlocal model_idx
+            model_idx = next_index(model_idx, len(model_names), delta)
+
+        def change_episodes(delta: int) -> None:
+            nonlocal episodes_idx
+            episodes_idx = next_index(episodes_idx, len(EPISODE_OPTIONS), delta)
+
+        def change_delay(delta: int) -> None:
+            nonlocal step_delay_idx
+            step_delay_idx = next_index(step_delay_idx, len(STEP_DELAY_OPTIONS), delta)
+
+        def start_action() -> None:
+            nonlocal app_state, log_lines, latest_metrics
+            nonlocal playback_env, playback_agent, playback_model
+            nonlocal playback_state, playback_done, playback_reward, playback_step
+            nonlocal playback_path, playback_visits, playback_is_paused, playback_last_step_time
+            nonlocal trainer, playback_rng
+
+            log_lines = []
+            latest_metrics = {}
+            playback_rng = random.Random(args.random_seed)
+
+            if current_model == "q_learning":
+                trainer = TrainingRunner()
+                trainer.start(
+                    map_name=current_map,
+                    episodes=current_episodes,
+                    seed=args.seed,
+                )
+                app_state = "training"
+            else:
+                playback_env = build_env(map_name=current_map)
+                playback_env.map_name = current_map
+                playback_state, playback_done, playback_reward, playback_step, playback_path, playback_visits = reset_panel_state(playback_env)
+                playback_agent = None
+                playback_model = "random_baseline"
+                playback_is_paused = False
+                playback_last_step_time = time.time()
+                app_state = "playback"
+
+        def cancel_training() -> None:
+            nonlocal app_state
+            trainer.terminate()
+            app_state = "menu"
+
+        def toggle_pause() -> None:
+            nonlocal playback_is_paused, playback_last_step_time
+            playback_is_paused = not playback_is_paused
+            playback_last_step_time = time.time()
+
+        def restart_playback() -> None:
+            nonlocal playback_state, playback_done, playback_reward, playback_step
+            nonlocal playback_path, playback_visits, playback_is_paused, playback_last_step_time
+            nonlocal playback_rng
+            if playback_env is None:
+                return
+            playback_rng = random.Random(args.random_seed)
+            playback_state, playback_done, playback_reward, playback_step, playback_path, playback_visits = reset_panel_state(playback_env)
+            playback_is_paused = False
+            playback_last_step_time = time.time()
+
+        def slower() -> None:
+            nonlocal step_delay_idx
+            new_delay = clamp_step_delay(current_step_delay + STEP_DELAY_DELTA)
+            step_delay_idx = min(
+                range(len(STEP_DELAY_OPTIONS)),
+                key=lambda i: abs(STEP_DELAY_OPTIONS[i] - new_delay),
+            )
+
+        def faster() -> None:
+            nonlocal step_delay_idx
+            new_delay = clamp_step_delay(current_step_delay - STEP_DELAY_DELTA)
+            step_delay_idx = min(
+                range(len(STEP_DELAY_OPTIONS)),
+                key=lambda i: abs(STEP_DELAY_OPTIONS[i] - new_delay),
+            )
+
+        def back_to_menu() -> None:
+            nonlocal app_state
+            app_state = "menu"
+
+        panel_rect = pygame.Rect(70, 120, menu_width - 140, menu_height - 210)
+        row_top = panel_rect.top + 34
+        row_gap = 64
+
+        row_arrow_rects = []
+        for idx in range(4):
+            y = row_top + idx * row_gap
+            value_box_left = panel_rect.left + 280
+            left_rect = pygame.Rect(value_box_left - 52, y, 42, 42)
+            right_rect = pygame.Rect(value_box_left + 360 + 10, y, 42, 42)
+            row_arrow_rects.append((left_rect, right_rect))
+
+        menu_buttons: list[Button] = [
+            Button(row_arrow_rects[0][0], "<", lambda: change_map(-1)),
+            Button(row_arrow_rects[0][1], ">", lambda: change_map(1)),
+            Button(row_arrow_rects[1][0], "<", lambda: change_model(-1)),
+            Button(row_arrow_rects[1][1], ">", lambda: change_model(1)),
+            Button(row_arrow_rects[2][0], "<", lambda: change_episodes(-1)),
+            Button(row_arrow_rects[2][1], ">", lambda: change_episodes(1)),
+            Button(row_arrow_rects[3][0], "<", lambda: change_delay(-1)),
+            Button(row_arrow_rects[3][1], ">", lambda: change_delay(1)),
+            Button(
+                pygame.Rect(230, 500, 240, 52),
+                "Start Training" if current_model == "q_learning" else "Start Preview",
+                start_action,
+                primary=True,
+            ),
+        ]
+
+        training_buttons: list[Button] = [
+            Button(
+                pygame.Rect(menu_width - 220, menu_height - 76, 180, 44),
+                "Cancel Training",
+                cancel_training,
+            )
+        ]
+
+        mouse_clicked = False
+        mouse_pos = pygame.mouse.get_pos()
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 trainer.terminate()
@@ -396,81 +594,22 @@ def main() -> None:
                     pygame.quit()
                     return
 
-                if app_state == "menu":
-                    if event.key == pygame.K_UP:
-                        selected_menu_idx = max(0, selected_menu_idx - 1)
-                    elif event.key == pygame.K_DOWN:
-                        selected_menu_idx = min(3, selected_menu_idx + 1)
-                    elif event.key == pygame.K_LEFT:
-                        if selected_menu_idx == 0:
-                            map_idx = (map_idx - 1) % len(map_names)
-                        elif selected_menu_idx == 1:
-                            model_idx = (model_idx - 1) % len(model_names)
-                        elif selected_menu_idx == 2:
-                            episodes_idx = (episodes_idx - 1) % len(EPISODE_OPTIONS)
-                        elif selected_menu_idx == 3:
-                            step_delay_idx = (step_delay_idx - 1) % len(STEP_DELAY_OPTIONS)
-                    elif event.key == pygame.K_RIGHT:
-                        if selected_menu_idx == 0:
-                            map_idx = (map_idx + 1) % len(map_names)
-                        elif selected_menu_idx == 1:
-                            model_idx = (model_idx + 1) % len(model_names)
-                        elif selected_menu_idx == 2:
-                            episodes_idx = (episodes_idx + 1) % len(EPISODE_OPTIONS)
-                        elif selected_menu_idx == 3:
-                            step_delay_idx = (step_delay_idx + 1) % len(STEP_DELAY_OPTIONS)
-                    elif event.key == pygame.K_RETURN:
-                        log_lines = []
-                        latest_metrics = {}
-                        playback_rng = random.Random(args.random_seed)
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_clicked = True
 
-                        if current_model == "q_learning":
-                            trainer = TrainingRunner()
-                            trainer.start(
-                                map_name=current_map,
-                                episodes=current_episodes,
-                                seed=args.seed,
-                            )
-                            app_state = "training"
-                        else:
-                            playback_env = build_env(map_name=current_map)
-                            playback_env.map_name = current_map
-                            playback_state, playback_done, playback_reward, playback_step, playback_path, playback_visits = reset_panel_state(playback_env)
-                            playback_agent = None
-                            playback_model = "random_baseline"
-                            playback_is_paused = False
-                            playback_last_step_time = time.time()
-                            app_state = "playback"
+        if mouse_clicked:
+            active_buttons: list[Button]
+            if app_state == "menu":
+                active_buttons = menu_buttons
+            elif app_state == "training":
+                active_buttons = training_buttons
+            else:
+                active_buttons = []
 
-                elif app_state == "training":
-                    pass
-
-                elif app_state == "playback":
-                    if event.key == pygame.K_SPACE:
-                        playback_is_paused = not playback_is_paused
-                        playback_last_step_time = time.time()
-                    elif event.key == pygame.K_r:
-                        if playback_env is not None:
-                            playback_rng = random.Random(args.random_seed)
-                            playback_state, playback_done, playback_reward, playback_step, playback_path, playback_visits = reset_panel_state(playback_env)
-                            playback_is_paused = False
-                            playback_last_step_time = time.time()
-                    elif event.key == pygame.K_LEFTBRACKET:
-                        new_delay = clamp_step_delay(current_step_delay + STEP_DELAY_DELTA)
-                        nearest_idx = min(
-                            range(len(STEP_DELAY_OPTIONS)),
-                            key=lambda i: abs(STEP_DELAY_OPTIONS[i] - new_delay),
-                        )
-                        step_delay_idx = nearest_idx
-                    elif event.key == pygame.K_RIGHTBRACKET:
-                        new_delay = clamp_step_delay(current_step_delay - STEP_DELAY_DELTA)
-                        nearest_idx = min(
-                            range(len(STEP_DELAY_OPTIONS)),
-                            key=lambda i: abs(STEP_DELAY_OPTIONS[i] - new_delay),
-                        )
-                        step_delay_idx = nearest_idx
-                    elif event.key == pygame.K_BACKSPACE:
-                        app_state = "menu"
+            for button in active_buttons:
+                if button.enabled and button.rect.collidepoint(mouse_pos):
+                    button.on_click()
+                    break
 
         if app_state == "training":
             for line in trainer.poll_lines():
@@ -519,19 +658,26 @@ def main() -> None:
                 playback_last_step_time = now
 
         if app_state == "menu":
+            if screen.get_width() != menu_width or screen.get_height() != menu_height:
+                screen = pygame.display.set_mode((menu_width, menu_height))
+
             draw_menu(
                 screen=screen,
                 width=menu_width,
                 height=menu_height,
                 fonts=fonts,
-                selected_index=selected_menu_idx,
                 map_name=current_map,
                 model_name=current_model,
                 episodes=current_episodes,
                 step_delay=current_step_delay,
+                buttons=menu_buttons,
+                row_arrow_rects=row_arrow_rects,
             )
 
         elif app_state == "training":
+            if screen.get_width() != menu_width or screen.get_height() != menu_height:
+                screen = pygame.display.set_mode((menu_width, menu_height))
+
             draw_training_screen(
                 screen=screen,
                 width=menu_width,
@@ -542,6 +688,7 @@ def main() -> None:
                 episodes=current_episodes,
                 latest_metrics=latest_metrics,
                 log_lines=log_lines,
+                buttons=training_buttons,
             )
 
         elif app_state == "playback" and playback_env is not None:
@@ -549,7 +696,7 @@ def main() -> None:
                 map_name=current_map,
                 total_reward=playback_reward,
                 step_idx=playback_step,
-                include_map_line=False,
+                include_map_line=True,
             )
             preview_right_lines = build_right_status_lines(
                 env=playback_env,
@@ -557,16 +704,14 @@ def main() -> None:
                 is_paused=playback_is_paused,
                 step_delay=current_step_delay,
             )
-            from utils.ui_utils import compute_panel_layout
-
             preview_layout = compute_panel_layout(
                 env=playback_env,
                 cell_size=args.cell_size,
                 fonts=fonts,
                 left_lines=preview_left_lines,
                 right_lines=preview_right_lines,
-                title_text="Learned Greedy Agent" if playback_model == "q_learning" else "Random Baseline",
-                subtitle_text=f"Map: {current_map}",
+                title_text="SweepAgent UI Demo",
+                subtitle_text=None,
             )
 
             bottom_info_height = compute_bottom_info_height(fonts)
@@ -575,6 +720,20 @@ def main() -> None:
 
             if screen.get_width() != playback_width or screen.get_height() != playback_height:
                 screen = pygame.display.set_mode((playback_width, playback_height))
+
+            playback_buttons = [
+                Button(pygame.Rect(24, 24, 120, 40), "Pause" if not playback_is_paused else "Resume", toggle_pause),
+                Button(pygame.Rect(156, 24, 120, 40), "Restart", restart_playback),
+                Button(pygame.Rect(288, 24, 110, 40), "Slower", slower),
+                Button(pygame.Rect(410, 24, 110, 40), "Faster", faster),
+                Button(pygame.Rect(playback_width - 160, 24, 136, 40), "Back to Menu", back_to_menu),
+            ]
+
+            if mouse_clicked:
+                for button in playback_buttons:
+                    if button.enabled and button.rect.collidepoint(mouse_pos):
+                        button.on_click()
+                        break
 
             draw_playback_screen(
                 screen=screen,
@@ -591,6 +750,7 @@ def main() -> None:
                 visit_counts=playback_visits,
                 path_history=playback_path,
                 cell_size=args.cell_size,
+                buttons=playback_buttons,
             )
 
         pygame.display.flip()
