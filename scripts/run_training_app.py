@@ -88,9 +88,14 @@ PLAYBACK_CONTROL_BAR_HEIGHT = 72
 PLAYBACK_TOP_RESERVED = PLAYBACK_TITLE_AREA_HEIGHT + PLAYBACK_CONTROL_BAR_HEIGHT
 
 TRAINING_METRICS_HEIGHT = 180
-TRAINING_LOG_HEIGHT = 270
+TRAINING_LOG_HEIGHT = 220
 TRAINING_GRAPH_HEIGHT = 180
 TRAINING_PREVIEW_HEIGHT = 360
+
+TRAINING_TOP_Y = 96
+TRAINING_GAP = 18
+TRAINING_BOTTOM_ACTION_HEIGHT = 72
+TRAINING_BOTTOM_MARGIN = 24
 
 
 @dataclass
@@ -171,6 +176,22 @@ def parse_args() -> argparse.Namespace:
 
 def clamp_step_delay(value: float) -> float:
     return max(MIN_STEP_DELAY, min(MAX_STEP_DELAY, value))
+
+
+def compute_training_window_height() -> int:
+    return (
+        TRAINING_TOP_Y
+        + TRAINING_METRICS_HEIGHT
+        + TRAINING_GAP
+        + TRAINING_LOG_HEIGHT
+        + TRAINING_GAP
+        + TRAINING_GRAPH_HEIGHT
+        + TRAINING_GAP
+        + TRAINING_PREVIEW_HEIGHT
+        + TRAINING_GAP
+        + TRAINING_BOTTOM_ACTION_HEIGHT
+        + TRAINING_BOTTOM_MARGIN
+    )
 
 
 def draw_button(
@@ -329,45 +350,15 @@ def draw_menu(
     result_option_rects: list[pygame.Rect] = []
 
     if open_dropdown == "map":
-        map_option_rects = draw_dropdown_overlay(
-            screen,
-            fonts,
-            map_rect,
-            list(MAP_PRESETS.keys()),
-            mouse_pos,
-        )
+        map_option_rects = draw_dropdown_overlay(screen, fonts, map_rect, list(MAP_PRESETS.keys()), mouse_pos)
     elif open_dropdown == "model":
-        model_option_rects = draw_dropdown_overlay(
-            screen,
-            fonts,
-            model_rect,
-            MODEL_OPTIONS,
-            mouse_pos,
-        )
+        model_option_rects = draw_dropdown_overlay(screen, fonts, model_rect, MODEL_OPTIONS, mouse_pos)
     elif open_dropdown == "episodes":
-        episode_option_rects = draw_dropdown_overlay(
-            screen,
-            fonts,
-            episodes_rect,
-            [str(x) for x in EPISODE_OPTIONS],
-            mouse_pos,
-        )
+        episode_option_rects = draw_dropdown_overlay(screen, fonts, episodes_rect, [str(x) for x in EPISODE_OPTIONS], mouse_pos)
     elif open_dropdown == "delay":
-        delay_option_rects = draw_dropdown_overlay(
-            screen,
-            fonts,
-            delay_rect,
-            [f"{x:.1f}s" for x in STEP_DELAY_OPTIONS],
-            mouse_pos,
-        )
+        delay_option_rects = draw_dropdown_overlay(screen, fonts, delay_rect, [f"{x:.1f}s" for x in STEP_DELAY_OPTIONS], mouse_pos)
     elif open_dropdown == "result_view":
-        result_option_rects = draw_dropdown_overlay(
-            screen,
-            fonts,
-            result_rect,
-            RESULT_VIEW_OPTIONS,
-            mouse_pos,
-        )
+        result_option_rects = draw_dropdown_overlay(screen, fonts, result_rect, RESULT_VIEW_OPTIONS, mouse_pos)
 
     return {
         "map_rect": map_rect,
@@ -535,8 +526,6 @@ def draw_training_preview_panel(
     total_reward: float,
     step_idx: int,
     done: bool,
-    is_paused: bool,
-    step_delay: float,
     visit_counts: Dict[Tuple[int, int], int],
     path_history: List[Tuple[int, int]],
     cell_size: int,
@@ -547,32 +536,16 @@ def draw_training_preview_panel(
     title = fonts.body_font.render("Mini Rollout Preview", True, TEXT_COLOR)
     screen.blit(title, (panel_rect.left + 16, panel_rect.top + 12))
 
-    grid_top = panel_rect.top + 48
-    grid_left = panel_rect.left + 16
+    from utils.ui_utils import draw_grid, draw_path_overlay, draw_robot
 
     preview_cell_size = cell_size
     max_grid_width = panel_rect.width - 32
-    max_grid_height = panel_rect.height - 64
+    max_grid_height = panel_rect.height - 84
 
     if env.cols * preview_cell_size > max_grid_width:
-        preview_cell_size = max(22, max_grid_width // env.cols)
+        preview_cell_size = max(20, max_grid_width // env.cols)
     if env.rows * preview_cell_size > max_grid_height:
-        preview_cell_size = max(22, min(preview_cell_size, max_grid_height // env.rows))
-
-    left_lines = build_left_status_lines(
-        map_name=getattr(env, "map_name", "unknown"),
-        total_reward=total_reward,
-        step_idx=step_idx,
-        include_map_line=False,
-    )
-    right_lines = build_right_status_lines(
-        env=env,
-        done=done,
-        is_paused=is_paused,
-        step_delay=None,
-    )
-
-    from utils.ui_utils import draw_grid, draw_path_overlay, draw_robot
+        preview_cell_size = max(20, min(preview_cell_size, max_grid_height // env.rows))
 
     grid_width = env.cols * preview_cell_size
     grid_height = env.rows * preview_cell_size
@@ -604,20 +577,12 @@ def draw_training_preview_panel(
         grid_left=grid_left,
     )
 
-    info_y = panel_rect.bottom - 28
-    left_text = fonts.small_font.render(
+    bottom_text = fonts.small_font.render(
         f"Step {step_idx} | Reward {total_reward:.0f}",
         True,
         MUTED_TEXT_COLOR,
     )
-    right_text = fonts.small_font.render(
-        f"Battery {env.battery_remaining}/{env.battery_capacity}" if env.battery_capacity is not None else "Battery off",
-        True,
-        MUTED_TEXT_COLOR,
-    )
-    screen.blit(left_text, (panel_rect.left + 16, info_y))
-    right_rect = right_text.get_rect(bottomright=(panel_rect.right - 16, panel_rect.bottom - 12))
-    screen.blit(right_text, right_rect)
+    screen.blit(bottom_text, (panel_rect.left + 16, panel_rect.bottom - 28))
 
     return pygame.Rect(grid_left, grid_top, grid_width, grid_height)
 
@@ -655,7 +620,7 @@ def draw_training_screen(
     )
     screen.blit(subtitle, (WINDOW_PADDING_X, 58))
 
-    metrics_panel = pygame.Rect(24, 96, width - 48, TRAINING_METRICS_HEIGHT)
+    metrics_panel = pygame.Rect(24, TRAINING_TOP_Y, width - 48, TRAINING_METRICS_HEIGHT)
     draw_training_metrics_panel(
         screen=screen,
         fonts=fonts,
@@ -663,7 +628,7 @@ def draw_training_screen(
         latest_metrics=latest_metrics,
     )
 
-    logs_panel = pygame.Rect(24, metrics_panel.bottom + 18, width - 48, TRAINING_LOG_HEIGHT)
+    logs_panel = pygame.Rect(24, metrics_panel.bottom + TRAINING_GAP, width - 48, TRAINING_LOG_HEIGHT)
     track_rect, max_scroll = draw_log_panel(
         screen=screen,
         fonts=fonts,
@@ -672,7 +637,7 @@ def draw_training_screen(
         log_scroll_offset=log_scroll_offset,
     )
 
-    graph_panel = pygame.Rect(24, logs_panel.bottom + 18, width - 48, TRAINING_GRAPH_HEIGHT)
+    graph_panel = pygame.Rect(24, logs_panel.bottom + TRAINING_GAP, width - 48, TRAINING_GRAPH_HEIGHT)
     draw_training_graph_panel(
         screen=screen,
         fonts=fonts,
@@ -680,7 +645,7 @@ def draw_training_screen(
         latest_metrics=latest_metrics,
     )
 
-    preview_panel = pygame.Rect(24, graph_panel.bottom + 18, width - 48, TRAINING_PREVIEW_HEIGHT)
+    preview_panel = pygame.Rect(24, graph_panel.bottom + TRAINING_GAP, width - 48, TRAINING_PREVIEW_HEIGHT)
     draw_training_preview_panel(
         screen=screen,
         fonts=fonts,
@@ -689,8 +654,6 @@ def draw_training_screen(
         total_reward=preview_reward,
         step_idx=preview_step,
         done=preview_done,
-        is_paused=False,
-        step_delay=0.0,
         visit_counts=preview_visits,
         path_history=preview_path,
         cell_size=cell_size,
@@ -986,7 +949,6 @@ def main() -> None:
 
     training_preview_env = build_env(map_name=map_name)
     training_preview_env.map_name = map_name
-    training_preview_agent = None
     training_preview_state, training_preview_done, training_preview_reward, training_preview_step, training_preview_path, training_preview_visits = reset_panel_state(training_preview_env)
     training_preview_last_step_time = time.time()
 
@@ -1025,17 +987,15 @@ def main() -> None:
     while True:
         mouse_clicked = False
         mouse_pos = pygame.mouse.get_pos()
-        track_rect: pygame.Rect | None = None
         max_scroll = 0
 
         def rebuild_training_preview_env() -> None:
-            nonlocal training_preview_env, training_preview_agent
+            nonlocal training_preview_env
             nonlocal training_preview_state, training_preview_done, training_preview_reward, training_preview_step
             nonlocal training_preview_path, training_preview_visits, training_preview_last_step_time
 
             training_preview_env = build_env(map_name=map_name)
             training_preview_env.map_name = map_name
-            training_preview_agent = None
             training_preview_state, training_preview_done, training_preview_reward, training_preview_step, training_preview_path, training_preview_visits = reset_panel_state(training_preview_env)
             training_preview_last_step_time = time.time()
 
@@ -1155,9 +1115,10 @@ def main() -> None:
             )
         ]
 
+        training_height = compute_training_window_height()
         training_buttons = [
             Button(
-                pygame.Rect(MENU_WIDTH - 220, MENU_HEIGHT - 60, 180, 44),
+                pygame.Rect(MENU_WIDTH - 220, training_height - 60, 180, 44),
                 "Cancel Training",
                 cancel_training,
             )
@@ -1342,6 +1303,7 @@ def main() -> None:
                                 clicked_option = True
                                 if open_dropdown == "map":
                                     map_name = list(MAP_PRESETS.keys())[idx]
+                                    rebuild_training_preview_env()
                                 elif open_dropdown == "model":
                                     model_name = MODEL_OPTIONS[idx]
                                 elif open_dropdown == "episodes":
@@ -1358,13 +1320,13 @@ def main() -> None:
                             open_dropdown = None
 
         elif app_state == "training":
-            if screen.get_width() != MENU_WIDTH or screen.get_height() != MENU_HEIGHT:
-                screen = pygame.display.set_mode((MENU_WIDTH, MENU_HEIGHT))
+            if screen.get_width() != MENU_WIDTH or screen.get_height() != training_height:
+                screen = pygame.display.set_mode((MENU_WIDTH, training_height))
 
-            track_rect, max_scroll = draw_training_screen(
+            _, max_scroll = draw_training_screen(
                 screen=screen,
                 width=MENU_WIDTH,
-                height=MENU_HEIGHT,
+                height=training_height,
                 fonts=fonts,
                 map_name=map_name,
                 model_name=model_name,
