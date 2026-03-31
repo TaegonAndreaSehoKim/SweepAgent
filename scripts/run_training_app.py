@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import random
 import sys
 import time
 from pathlib import Path
-from typing import Tuple
 
 import pygame
 
@@ -14,7 +12,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from configs.map_presets import MAP_PRESETS
-from utils.experiment_utils import build_env, load_or_train_q_agent
 from utils.ui_utils import (
     WINDOW_PADDING_X,
     build_left_status_lines,
@@ -22,7 +19,6 @@ from utils.ui_utils import (
     compute_bottom_info_height,
     compute_panel_layout,
     load_fonts,
-    reset_panel_state,
 )
 from ui.training_app_core import (
     Button,
@@ -33,17 +29,30 @@ from ui.training_app_core import (
     MENU_WIDTH,
     MODEL_OPTIONS,
     PLAYBACK_TOP_RESERVED,
-    PREVIEW_STEP_INTERVAL_SEC,
     PROGRESS_FILL,
     RESULT_VIEW_OPTIONS,
     STEP_DELAY_OPTIONS,
     SUCCESS_FILL,
-    TRAINING_LINE_PATTERN,
     PreviewPolicy,
-    TrainingRunner,
     clamp_step_delay,
     compute_training_window_height,
-    get_checkpoint_path,
+)
+from ui.training_app_handlers import (
+    cancel_training,
+    maybe_reset_finished_preview,
+    rebuild_training_preview_env,
+    start_selected_flow,
+    step_compare_playback,
+    step_single_playback,
+    step_training_preview,
+    update_training_from_subprocess,
+)
+from ui.training_app_state import (
+    ComparePlaybackState,
+    MenuSelection,
+    PreviewState,
+    SinglePlaybackState,
+    TrainingState,
 )
 from ui.training_app_views import (
     draw_compare_playback_screen,
@@ -61,6 +70,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def ui_button(x: int, y: int, w: int, h: int, label: str, on_click, primary: bool = False) -> Button:
+    """Small helper to create Button objects with pygame.Rect."""
+    return Button(
+        rect=pygame.Rect(x, y, w, h),
+        label=label,
+        on_click=on_click,
+        primary=primary,
+    )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -68,248 +87,96 @@ def main() -> None:
     fonts = load_fonts()
 
     # Current menu selections.
-    map_name = "charge_required_v2" if "charge_required_v2" in MAP_PRESETS else list(MAP_PRESETS.keys())[0]
-    model_name = "q_learning"
-    result_view = "single_playback"
-    episodes = 5000
-    step_delay = 0.5
+    menu = MenuSelection(
+        map_name="charge_required_v2" if "charge_required_v2" in MAP_PRESETS else list(MAP_PRESETS.keys())[0],
+        model_name="q_learning",
+        result_view="single_playback",
+        episodes=5000,
+        step_delay=0.5,
+    )
+
+    # App state containers.
+    training = TrainingState()
+    preview = PreviewState()
+    single_playback = SinglePlaybackState()
+    compare_playback = ComparePlaybackState()
 
     screen = pygame.display.set_mode((MENU_WIDTH, MENU_HEIGHT))
     pygame.display.set_caption("SweepAgent Training App")
     clock = pygame.time.Clock()
 
     app_state = "menu"
-    open_dropdown: str | None = None
 
-    # Training state.
-    trainer = TrainingRunner()
-    latest_metrics: dict[str, str] = {}
-    log_lines: list[str] = []
-    log_scroll_offset = 0
-
-    # Training mini preview state.
-    training_preview_env = build_env(map_name=map_name)
-    training_preview_env.map_name = map_name
-    (
-        training_preview_state,
-        training_preview_done,
-        training_preview_reward,
-        training_preview_step,
-        training_preview_path,
-        training_preview_visits,
-    ) = reset_panel_state(training_preview_env)
-    training_preview_last_step_time = time.time()
-    training_preview_policy = PreviewPolicy(get_checkpoint_path(map_name, args.seed))
-    training_preview_mode_label = "random fallback"
-
-    # Single playback state.
-    playback_env = None
-    playback_agent = None
-    playback_model = None
-    playback_state = None
-    playback_done = False
-    playback_reward = 0.0
-    playback_step = 0
-    playback_path: list[Tuple[int, int]] = []
-    playback_visits: dict[Tuple[int, int], int] = {}
-    playback_is_paused = False
-    playback_last_step_time = time.time()
-    playback_rng = random.Random(args.random_seed)
-
-    # Compare playback state.
-    compare_random_env = None
-    compare_learned_env = None
-    compare_learned_agent = None
-    compare_random_state = None
-    compare_learned_state = None
-    compare_random_done = False
-    compare_learned_done = False
-    compare_random_reward = 0.0
-    compare_learned_reward = 0.0
-    compare_random_step = 0
-    compare_learned_step = 0
-    compare_random_path: list[Tuple[int, int]] = []
-    compare_learned_path: list[Tuple[int, int]] = []
-    compare_random_visits: dict[Tuple[int, int], int] = {}
-    compare_learned_visits: dict[Tuple[int, int], int] = {}
-    compare_is_paused = False
-    compare_last_step_time = time.time()
-    compare_rng = random.Random(args.random_seed)
-
-    def rebuild_training_preview_env() -> None:
-        """Reset training preview environment and checkpoint policy."""
-        nonlocal training_preview_env
-        nonlocal training_preview_state, training_preview_done, training_preview_reward, training_preview_step
-        nonlocal training_preview_path, training_preview_visits, training_preview_last_step_time
-        nonlocal training_preview_policy, training_preview_mode_label
-
-        training_preview_env = build_env(map_name=map_name)
-        training_preview_env.map_name = map_name
-        (
-            training_preview_state,
-            training_preview_done,
-            training_preview_reward,
-            training_preview_step,
-            training_preview_path,
-            training_preview_visits,
-        ) = reset_panel_state(training_preview_env)
-        training_preview_last_step_time = time.time()
-        training_preview_policy = PreviewPolicy(get_checkpoint_path(map_name, args.seed))
-        training_preview_mode_label = "random fallback"
-
-    def start_action() -> None:
-        """Start training or direct preview depending on selected model."""
-        nonlocal app_state, latest_metrics, log_lines, open_dropdown, log_scroll_offset
-        nonlocal trainer
-        nonlocal playback_env, playback_agent, playback_model
-        nonlocal playback_state, playback_done, playback_reward, playback_step, playback_path, playback_visits
-        nonlocal playback_is_paused, playback_last_step_time, playback_rng
-        nonlocal compare_random_env, compare_learned_env, compare_learned_agent
-        nonlocal compare_random_state, compare_learned_state
-        nonlocal compare_random_done, compare_learned_done
-        nonlocal compare_random_reward, compare_learned_reward
-        nonlocal compare_random_step, compare_learned_step
-        nonlocal compare_random_path, compare_learned_path
-        nonlocal compare_random_visits, compare_learned_visits
-        nonlocal compare_is_paused, compare_last_step_time, compare_rng
-
-        open_dropdown = None
-        latest_metrics = {}
-        log_lines = []
-        log_scroll_offset = 0
-        rebuild_training_preview_env()
-
-        if model_name == "q_learning":
-            trainer = TrainingRunner()
-            trainer.start(map_name=map_name, episodes=episodes, seed=args.seed)
-            app_state = "training"
-        else:
-            if result_view == "single_playback":
-                playback_env = build_env(map_name=map_name)
-                playback_env.map_name = map_name
-                (
-                    playback_state,
-                    playback_done,
-                    playback_reward,
-                    playback_step,
-                    playback_path,
-                    playback_visits,
-                ) = reset_panel_state(playback_env)
-                playback_agent = None
-                playback_model = "random_baseline"
-                playback_is_paused = False
-                playback_last_step_time = time.time()
-                playback_rng = random.Random(args.random_seed)
-                app_state = "playback_single"
-            else:
-                compare_random_env = build_env(map_name=map_name)
-                compare_learned_env = build_env(map_name=map_name)
-                compare_random_env.map_name = map_name
-                compare_learned_env.map_name = map_name
-                compare_learned_agent = None
-
-                (
-                    compare_random_state,
-                    compare_random_done,
-                    compare_random_reward,
-                    compare_random_step,
-                    compare_random_path,
-                    compare_random_visits,
-                ) = reset_panel_state(compare_random_env)
-                (
-                    compare_learned_state,
-                    compare_learned_done,
-                    compare_learned_reward,
-                    compare_learned_step,
-                    compare_learned_path,
-                    compare_learned_visits,
-                ) = reset_panel_state(compare_learned_env)
-
-                compare_is_paused = False
-                compare_last_step_time = time.time()
-                compare_rng = random.Random(args.random_seed)
-                app_state = "playback_compare"
-
-    def cancel_training() -> None:
-        """Cancel the training subprocess and go back to menu."""
-        nonlocal app_state
-        trainer.terminate()
-        app_state = "menu"
+    # Build the initial mini preview env.
+    rebuild_training_preview_env(
+        preview_state=preview,
+        menu=menu,
+        preview_policy_cls=PreviewPolicy,
+        seed=args.seed,
+    )
 
     def back_to_menu() -> None:
-        """Return to menu from playback screens."""
-        nonlocal app_state, open_dropdown
+        nonlocal app_state
         app_state = "menu"
-        open_dropdown = None
+        menu.open_dropdown = None
 
     def toggle_single_pause() -> None:
-        """Pause/resume single playback."""
-        nonlocal playback_is_paused, playback_last_step_time
-        playback_is_paused = not playback_is_paused
-        playback_last_step_time = time.time()
+        single_playback.is_paused = not single_playback.is_paused
+        single_playback.last_step_time = time.time()
 
     def restart_single_playback() -> None:
-        """Restart single playback episode."""
-        nonlocal playback_state, playback_done, playback_reward, playback_step
-        nonlocal playback_path, playback_visits, playback_is_paused, playback_last_step_time, playback_rng
-        if playback_env is None:
+        from utils.ui_utils import reset_panel_state
+
+        if single_playback.env is None:
             return
-        playback_rng = random.Random(args.random_seed)
+
         (
-            playback_state,
-            playback_done,
-            playback_reward,
-            playback_step,
-            playback_path,
-            playback_visits,
-        ) = reset_panel_state(playback_env)
-        playback_is_paused = False
-        playback_last_step_time = time.time()
+            single_playback.state,
+            single_playback.done,
+            single_playback.total_reward,
+            single_playback.step_idx,
+            single_playback.path_history,
+            single_playback.visit_counts,
+        ) = reset_panel_state(single_playback.env)
+        single_playback.is_paused = False
+        single_playback.last_step_time = time.time()
 
     def toggle_compare_pause() -> None:
-        """Pause/resume compare playback."""
-        nonlocal compare_is_paused, compare_last_step_time
-        compare_is_paused = not compare_is_paused
-        compare_last_step_time = time.time()
+        compare_playback.is_paused = not compare_playback.is_paused
+        compare_playback.last_step_time = time.time()
 
     def restart_compare_playback() -> None:
-        """Restart both compare playback episodes."""
-        nonlocal compare_random_state, compare_random_done, compare_random_reward, compare_random_step
-        nonlocal compare_random_path, compare_random_visits
-        nonlocal compare_learned_state, compare_learned_done, compare_learned_reward, compare_learned_step
-        nonlocal compare_learned_path, compare_learned_visits
-        nonlocal compare_is_paused, compare_last_step_time, compare_rng
-        if compare_random_env is None or compare_learned_env is None:
+        from utils.ui_utils import reset_panel_state
+
+        if compare_playback.random_env is None or compare_playback.learned_env is None:
             return
-        compare_rng = random.Random(args.random_seed)
+
         (
-            compare_random_state,
-            compare_random_done,
-            compare_random_reward,
-            compare_random_step,
-            compare_random_path,
-            compare_random_visits,
-        ) = reset_panel_state(compare_random_env)
+            compare_playback.random_state,
+            compare_playback.random_done,
+            compare_playback.random_reward,
+            compare_playback.random_step,
+            compare_playback.random_path,
+            compare_playback.random_visits,
+        ) = reset_panel_state(compare_playback.random_env)
+
         (
-            compare_learned_state,
-            compare_learned_done,
-            compare_learned_reward,
-            compare_learned_step,
-            compare_learned_path,
-            compare_learned_visits,
-        ) = reset_panel_state(compare_learned_env)
-        compare_is_paused = False
-        compare_last_step_time = time.time()
+            compare_playback.learned_state,
+            compare_playback.learned_done,
+            compare_playback.learned_reward,
+            compare_playback.learned_step,
+            compare_playback.learned_path,
+            compare_playback.learned_visits,
+        ) = reset_panel_state(compare_playback.learned_env)
+
+        compare_playback.is_paused = False
+        compare_playback.last_step_time = time.time()
 
     def slower() -> None:
-        """Slow down playback speed."""
-        nonlocal step_delay
-        step_delay = clamp_step_delay(step_delay + 0.1, 0.1, 1.5)
+        menu.step_delay = clamp_step_delay(menu.step_delay + 0.1, 0.1, 1.5)
 
     def faster() -> None:
-        """Speed up playback speed."""
-        nonlocal step_delay
-        step_delay = clamp_step_delay(step_delay - 0.1, 0.1, 1.5)
+        menu.step_delay = clamp_step_delay(menu.step_delay - 0.1, 0.1, 1.5)
 
     while True:
         mouse_clicked = False
@@ -317,31 +184,37 @@ def main() -> None:
         max_scroll = 0
 
         menu_buttons = [
-            Button(
-                pygame.Rect(390, 720, 260, 54),
-                "Start Training" if model_name == "q_learning" else "Start Preview",
-                start_action,
+            ui_button(
+                x=390,
+                y=720,
+                w=260,
+                h=54,
+                label="Start Training" if menu.model_name == "q_learning" else "Start Preview",
+                on_click=lambda: None,
                 primary=True,
             )
         ]
 
         training_height = compute_training_window_height()
         training_buttons = [
-            Button(
-                pygame.Rect(MENU_WIDTH - 220, training_height - 60, 180, 44),
-                "Cancel Training",
-                cancel_training,
+            ui_button(
+                x=MENU_WIDTH - 220,
+                y=training_height - 60,
+                w=180,
+                h=44,
+                label="Cancel Training",
+                on_click=lambda: None,
             )
         ]
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                trainer.terminate()
+                training.runner.terminate()
                 pygame.quit()
                 return
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                trainer.terminate()
+                training.runner.terminate()
                 pygame.quit()
                 return
 
@@ -349,175 +222,43 @@ def main() -> None:
                 mouse_clicked = True
 
             if event.type == pygame.MOUSEWHEEL and app_state == "training":
-                log_scroll_offset -= event.y
-                log_scroll_offset = max(0, min(log_scroll_offset, max_scroll))
+                training.log_scroll_offset -= event.y
+                training.log_scroll_offset = max(0, min(training.log_scroll_offset, max_scroll))
 
-        # Training background updates.
+        # ---------------------------
+        # Background updates by state
+        # ---------------------------
+
         if app_state == "training":
-            for line in trainer.poll_lines():
-                log_lines.append(line)
-                match = TRAINING_LINE_PATTERN.search(line)
-                if match:
-                    latest_metrics = {
-                        "episode": match.group(1),
-                        "total": match.group(2),
-                        "avg_reward": match.group(3),
-                        "avg_cleaned_ratio": match.group(4) + "%",
-                        "success_rate": match.group(5) + "%",
-                        "epsilon": match.group(6),
-                    }
+            next_state = update_training_from_subprocess(
+                menu=menu,
+                training=training,
+                single_playback=single_playback,
+                compare_playback=compare_playback,
+                train_seed=args.seed,
+                random_seed=args.random_seed,
+            )
+            if next_state is not None:
+                app_state = next_state
 
-            if trainer.finished:
-                if trainer.return_code == 0:
-                    if result_view == "single_playback":
-                        playback_env = build_env(map_name=map_name)
-                        playback_env.map_name = map_name
-                        playback_agent = load_or_train_q_agent(
-                            map_name=map_name,
-                            num_episodes=episodes,
-                            seed=args.seed,
-                        )
-                        playback_model = "q_learning"
-                        (
-                            playback_state,
-                            playback_done,
-                            playback_reward,
-                            playback_step,
-                            playback_path,
-                            playback_visits,
-                        ) = reset_panel_state(playback_env)
-                        playback_is_paused = False
-                        playback_last_step_time = time.time()
-                        app_state = "playback_single"
-                    else:
-                        compare_random_env = build_env(map_name=map_name)
-                        compare_learned_env = build_env(map_name=map_name)
-                        compare_random_env.map_name = map_name
-                        compare_learned_env.map_name = map_name
-                        compare_learned_agent = load_or_train_q_agent(
-                            map_name=map_name,
-                            num_episodes=episodes,
-                            seed=args.seed,
-                        )
+            step_training_preview(preview)
+            maybe_reset_finished_preview(
+                preview=preview,
+                menu=menu,
+                preview_policy_cls=PreviewPolicy,
+                seed=args.seed,
+            )
 
-                        (
-                            compare_random_state,
-                            compare_random_done,
-                            compare_random_reward,
-                            compare_random_step,
-                            compare_random_path,
-                            compare_random_visits,
-                        ) = reset_panel_state(compare_random_env)
-                        (
-                            compare_learned_state,
-                            compare_learned_done,
-                            compare_learned_reward,
-                            compare_learned_step,
-                            compare_learned_path,
-                            compare_learned_visits,
-                        ) = reset_panel_state(compare_learned_env)
+        if app_state == "playback_single":
+            step_single_playback(single_playback, menu.step_delay)
 
-                        compare_is_paused = False
-                        compare_last_step_time = time.time()
-                        compare_rng = random.Random(args.random_seed)
-                        app_state = "playback_compare"
-                else:
-                    app_state = "menu"
+        if app_state == "playback_compare":
+            step_compare_playback(compare_playback, menu.step_delay)
 
-            now = time.time()
-            if training_preview_env is not None and now - training_preview_last_step_time >= PREVIEW_STEP_INTERVAL_SEC:
-                reloaded = training_preview_policy.maybe_reload()
-                if reloaded and training_preview_policy.q_table:
-                    training_preview_mode_label = "greedy checkpoint"
-                elif not training_preview_policy.q_table:
-                    training_preview_mode_label = "random fallback"
+        # ----------
+        # Rendering
+        # ----------
 
-                if training_preview_policy.q_table:
-                    action = training_preview_policy.get_greedy_action(
-                        training_preview_state,
-                        len(training_preview_env.ACTIONS),
-                    )
-                else:
-                    action = random.randrange(len(training_preview_env.ACTIONS))
-
-                (
-                    training_preview_state,
-                    reward,
-                    training_preview_done,
-                    _,
-                ) = training_preview_env.step(action)
-                training_preview_reward += reward
-                training_preview_step += 1
-                training_preview_path.append(training_preview_env.robot_pos)
-                training_preview_visits[training_preview_env.robot_pos] = (
-                    training_preview_visits.get(training_preview_env.robot_pos, 0) + 1
-                )
-                training_preview_last_step_time = now
-
-                if training_preview_done:
-                    rebuild_training_preview_env()
-
-        # Single playback background updates.
-        if app_state == "playback_single" and playback_env is not None:
-            now = time.time()
-            if not playback_done and not playback_is_paused and now - playback_last_step_time >= step_delay:
-                if playback_model == "q_learning" and playback_agent is not None:
-                    action = playback_agent.get_policy_action(playback_state)
-                else:
-                    action = playback_rng.randrange(len(playback_env.ACTIONS))
-
-                (
-                    playback_state,
-                    reward,
-                    playback_done,
-                    _,
-                ) = playback_env.step(action)
-                playback_reward += reward
-                playback_step += 1
-                playback_path.append(playback_env.robot_pos)
-                playback_visits[playback_env.robot_pos] = playback_visits.get(playback_env.robot_pos, 0) + 1
-                playback_last_step_time = now
-
-        # Compare playback background updates.
-        if app_state == "playback_compare" and compare_random_env is not None and compare_learned_env is not None:
-            now = time.time()
-            if not compare_is_paused and now - compare_last_step_time >= step_delay:
-                if not compare_random_done:
-                    random_action = compare_rng.randrange(len(compare_random_env.ACTIONS))
-                    (
-                        compare_random_state,
-                        reward,
-                        compare_random_done,
-                        _,
-                    ) = compare_random_env.step(random_action)
-                    compare_random_reward += reward
-                    compare_random_step += 1
-                    compare_random_path.append(compare_random_env.robot_pos)
-                    compare_random_visits[compare_random_env.robot_pos] = (
-                        compare_random_visits.get(compare_random_env.robot_pos, 0) + 1
-                    )
-
-                if not compare_learned_done:
-                    if compare_learned_agent is not None:
-                        learned_action = compare_learned_agent.get_policy_action(compare_learned_state)
-                    else:
-                        learned_action = compare_rng.randrange(len(compare_learned_env.ACTIONS))
-                    (
-                        compare_learned_state,
-                        reward,
-                        compare_learned_done,
-                        _,
-                    ) = compare_learned_env.step(learned_action)
-                    compare_learned_reward += reward
-                    compare_learned_step += 1
-                    compare_learned_path.append(compare_learned_env.robot_pos)
-                    compare_learned_visits[compare_learned_env.robot_pos] = (
-                        compare_learned_visits.get(compare_learned_env.robot_pos, 0) + 1
-                    )
-
-                compare_last_step_time = now
-
-        # Rendering.
         if app_state == "menu":
             if screen.get_width() != MENU_WIDTH or screen.get_height() != MENU_HEIGHT:
                 screen = pygame.display.set_mode((MENU_WIDTH, MENU_HEIGHT))
@@ -527,12 +268,12 @@ def main() -> None:
                 width=MENU_WIDTH,
                 height=MENU_HEIGHT,
                 fonts=fonts,
-                map_name=map_name,
-                model_name=model_name,
-                result_view=result_view,
-                episodes=episodes,
-                step_delay=step_delay,
-                open_dropdown=open_dropdown,
+                map_name=menu.map_name,
+                model_name=menu.model_name,
+                result_view=menu.result_view,
+                episodes=menu.episodes,
+                step_delay=menu.step_delay,
+                open_dropdown=menu.open_dropdown,
                 buttons=menu_buttons,
                 map_options=list(MAP_PRESETS.keys()),
                 model_options=MODEL_OPTIONS,
@@ -546,7 +287,16 @@ def main() -> None:
 
                 for button in menu_buttons:
                     if button.rect.collidepoint(mouse_pos):
-                        button.on_click()
+                        app_state = start_selected_flow(
+                            menu=menu,
+                            training=training,
+                            preview=preview,
+                            single_playback=single_playback,
+                            compare_playback=compare_playback,
+                            preview_policy_cls=PreviewPolicy,
+                            train_seed=args.seed,
+                            random_seed=args.random_seed,
+                        )
                         handled = True
                         break
 
@@ -561,18 +311,18 @@ def main() -> None:
 
                     for key, rect in dropdown_boxes.items():
                         if isinstance(rect, pygame.Rect) and rect.collidepoint(mouse_pos):
-                            open_dropdown = None if open_dropdown == key else key
+                            menu.open_dropdown = None if menu.open_dropdown == key else key
                             handled = True
                             break
 
-                if not handled and open_dropdown is not None:
+                if not handled and menu.open_dropdown is not None:
                     option_key = {
                         "map": "map_options",
                         "model": "model_options",
                         "episodes": "episodes_options",
                         "delay": "delay_options",
                         "result_view": "result_options",
-                    }[open_dropdown]
+                    }[menu.open_dropdown]
 
                     option_rects = dropdown_ui[option_key]
                     if isinstance(option_rects, list):
@@ -580,23 +330,28 @@ def main() -> None:
                         for idx, rect in enumerate(option_rects):
                             if rect.collidepoint(mouse_pos):
                                 clicked_option = True
-                                if open_dropdown == "map":
-                                    map_name = list(MAP_PRESETS.keys())[idx]
-                                    rebuild_training_preview_env()
-                                elif open_dropdown == "model":
-                                    model_name = MODEL_OPTIONS[idx]
-                                elif open_dropdown == "episodes":
-                                    episodes = EPISODE_OPTIONS[idx]
-                                elif open_dropdown == "delay":
-                                    step_delay = STEP_DELAY_OPTIONS[idx]
-                                elif open_dropdown == "result_view":
-                                    result_view = RESULT_VIEW_OPTIONS[idx]
-                                open_dropdown = None
+                                if menu.open_dropdown == "map":
+                                    menu.map_name = list(MAP_PRESETS.keys())[idx]
+                                    rebuild_training_preview_env(
+                                        preview_state=preview,
+                                        menu=menu,
+                                        preview_policy_cls=PreviewPolicy,
+                                        seed=args.seed,
+                                    )
+                                elif menu.open_dropdown == "model":
+                                    menu.model_name = MODEL_OPTIONS[idx]
+                                elif menu.open_dropdown == "episodes":
+                                    menu.episodes = EPISODE_OPTIONS[idx]
+                                elif menu.open_dropdown == "delay":
+                                    menu.step_delay = STEP_DELAY_OPTIONS[idx]
+                                elif menu.open_dropdown == "result_view":
+                                    menu.result_view = RESULT_VIEW_OPTIONS[idx]
+                                menu.open_dropdown = None
                                 handled = True
                                 break
 
                         if not clicked_option:
-                            open_dropdown = None
+                            menu.open_dropdown = None
 
         elif app_state == "training":
             if screen.get_width() != MENU_WIDTH or screen.get_height() != training_height:
@@ -607,18 +362,18 @@ def main() -> None:
                 width=MENU_WIDTH,
                 height=training_height,
                 fonts=fonts,
-                map_name=map_name,
-                model_name=model_name,
-                episodes=episodes,
-                latest_metrics=latest_metrics,
-                log_lines=log_lines,
-                log_scroll_offset=log_scroll_offset,
-                preview_env=training_preview_env,
-                preview_reward=training_preview_reward,
-                preview_step=training_preview_step,
-                preview_visits=training_preview_visits,
-                preview_path=training_preview_path,
-                preview_mode_label=training_preview_mode_label,
+                map_name=menu.map_name,
+                model_name=menu.model_name,
+                episodes=menu.episodes,
+                latest_metrics=training.latest_metrics,
+                log_lines=training.log_lines,
+                log_scroll_offset=training.log_scroll_offset,
+                preview_env=preview.env,
+                preview_reward=preview.total_reward,
+                preview_step=preview.step_idx,
+                preview_visits=preview.visit_counts,
+                preview_path=preview.path_history,
+                preview_mode_label=preview.mode_label,
                 cell_size=args.cell_size,
                 buttons=training_buttons,
                 progress_fill=PROGRESS_FILL,
@@ -630,24 +385,24 @@ def main() -> None:
             if mouse_clicked:
                 for button in training_buttons:
                     if button.rect.collidepoint(mouse_pos):
-                        button.on_click()
+                        app_state = cancel_training(training)
                         break
 
-        elif app_state == "playback_single" and playback_env is not None:
+        elif app_state == "playback_single" and single_playback.env is not None:
             preview_left_lines = build_left_status_lines(
-                map_name=map_name,
-                total_reward=playback_reward,
-                step_idx=playback_step,
+                map_name=menu.map_name,
+                total_reward=single_playback.total_reward,
+                step_idx=single_playback.step_idx,
                 include_map_line=True,
             )
             preview_right_lines = build_right_status_lines(
-                env=playback_env,
-                done=playback_done,
-                is_paused=playback_is_paused,
-                step_delay=step_delay,
+                env=single_playback.env,
+                done=single_playback.done,
+                is_paused=single_playback.is_paused,
+                step_delay=menu.step_delay,
             )
             preview_layout = compute_panel_layout(
-                env=playback_env,
+                env=single_playback.env,
                 cell_size=args.cell_size,
                 fonts=fonts,
                 left_lines=preview_left_lines,
@@ -663,11 +418,11 @@ def main() -> None:
                 screen = pygame.display.set_mode((playback_width, playback_height))
 
             playback_buttons = [
-                Button(pygame.Rect(24, 86, 120, 40), "Pause" if not playback_is_paused else "Resume", toggle_single_pause),
-                Button(pygame.Rect(156, 86, 120, 40), "Restart", restart_single_playback),
-                Button(pygame.Rect(288, 86, 110, 40), "Slower", slower),
-                Button(pygame.Rect(410, 86, 110, 40), "Faster", faster),
-                Button(pygame.Rect(playback_width - 160, 86, 136, 40), "Back to Menu", back_to_menu),
+                ui_button(24, 86, 120, 40, "Pause" if not single_playback.is_paused else "Resume", toggle_single_pause),
+                ui_button(156, 86, 120, 40, "Restart", restart_single_playback),
+                ui_button(288, 86, 110, 40, "Slower", slower),
+                ui_button(410, 86, 110, 40, "Faster", faster),
+                ui_button(playback_width - 160, 86, 136, 40, "Back to Menu", back_to_menu),
             ]
 
             draw_single_playback_screen(
@@ -675,15 +430,15 @@ def main() -> None:
                 width=playback_width,
                 height=playback_height,
                 fonts=fonts,
-                title_text="Learned Greedy Agent" if playback_model == "q_learning" else "Random Baseline",
-                env=playback_env,
-                total_reward=playback_reward,
-                step_idx=playback_step,
-                done=playback_done,
-                is_paused=playback_is_paused,
-                step_delay=step_delay,
-                visit_counts=playback_visits,
-                path_history=playback_path,
+                title_text="Learned Greedy Agent" if single_playback.model_name == "q_learning" else "Random Baseline",
+                env=single_playback.env,
+                total_reward=single_playback.total_reward,
+                step_idx=single_playback.step_idx,
+                done=single_playback.done,
+                is_paused=single_playback.is_paused,
+                step_delay=menu.step_delay,
+                visit_counts=single_playback.visit_counts,
+                path_history=single_playback.path_history,
                 cell_size=args.cell_size,
                 buttons=playback_buttons,
             )
@@ -694,16 +449,19 @@ def main() -> None:
                         button.on_click()
                         break
 
-        elif app_state == "playback_compare" and compare_random_env is not None and compare_learned_env is not None:
+        elif app_state == "playback_compare" and compare_playback.random_env is not None and compare_playback.learned_env is not None:
             preview_left_lines = [
                 ("Step: 9999", (0, 0, 0)),
                 ("Reward: 999", (0, 0, 0)),
             ]
             preview_right_lines = [
-                (f"Cleaned: {compare_random_env.total_dirty_tiles}/{compare_random_env.total_dirty_tiles}", (0, 0, 0)),
                 (
-                    f"Battery: {compare_random_env.battery_capacity}/{compare_random_env.battery_capacity}"
-                    if compare_random_env.battery_capacity is not None
+                    f"Cleaned: {compare_playback.random_env.total_dirty_tiles}/{compare_playback.random_env.total_dirty_tiles}",
+                    (0, 0, 0),
+                ),
+                (
+                    f"Battery: {compare_playback.random_env.battery_capacity}/{compare_playback.random_env.battery_capacity}"
+                    if compare_playback.random_env.battery_capacity is not None
                     else "Battery: off",
                     (0, 0, 0),
                 ),
@@ -711,22 +469,22 @@ def main() -> None:
             ]
 
             left_layout = compute_panel_layout(
-                env=compare_random_env,
+                env=compare_playback.random_env,
                 cell_size=args.cell_size,
                 fonts=fonts,
                 left_lines=preview_left_lines,
                 right_lines=preview_right_lines,
                 title_text="Random Agent",
-                subtitle_text=f"Map: {map_name}",
+                subtitle_text=f"Map: {menu.map_name}",
             )
             right_layout = compute_panel_layout(
-                env=compare_learned_env,
+                env=compare_playback.learned_env,
                 cell_size=args.cell_size,
                 fonts=fonts,
                 left_lines=preview_left_lines,
                 right_lines=preview_right_lines,
                 title_text="Learned Greedy Agent",
-                subtitle_text=f"Map: {map_name}",
+                subtitle_text=f"Map: {menu.map_name}",
             )
 
             panel_width = max(left_layout.panel_width, right_layout.panel_width)
@@ -739,11 +497,11 @@ def main() -> None:
                 screen = pygame.display.set_mode((compare_width, compare_height))
 
             playback_buttons = [
-                Button(pygame.Rect(24, 86, 120, 40), "Pause" if not compare_is_paused else "Resume", toggle_compare_pause),
-                Button(pygame.Rect(156, 86, 120, 40), "Restart", restart_compare_playback),
-                Button(pygame.Rect(288, 86, 110, 40), "Slower", slower),
-                Button(pygame.Rect(410, 86, 110, 40), "Faster", faster),
-                Button(pygame.Rect(compare_width - 160, 86, 136, 40), "Back to Menu", back_to_menu),
+                ui_button(24, 86, 120, 40, "Pause" if not compare_playback.is_paused else "Resume", toggle_compare_pause),
+                ui_button(156, 86, 120, 40, "Restart", restart_compare_playback),
+                ui_button(288, 86, 110, 40, "Slower", slower),
+                ui_button(410, 86, 110, 40, "Faster", faster),
+                ui_button(compare_width - 160, 86, 136, 40, "Back to Menu", back_to_menu),
             ]
 
             draw_compare_playback_screen(
@@ -751,20 +509,20 @@ def main() -> None:
                 width=compare_width,
                 height=compare_height,
                 fonts=fonts,
-                random_env=compare_random_env,
-                learned_env=compare_learned_env,
-                random_reward=compare_random_reward,
-                learned_reward=compare_learned_reward,
-                random_step=compare_random_step,
-                learned_step=compare_learned_step,
-                random_done=compare_random_done,
-                learned_done=compare_learned_done,
-                is_paused=compare_is_paused,
-                step_delay=step_delay,
-                random_visits=compare_random_visits,
-                learned_visits=compare_learned_visits,
-                random_path=compare_random_path,
-                learned_path=compare_learned_path,
+                random_env=compare_playback.random_env,
+                learned_env=compare_playback.learned_env,
+                random_reward=compare_playback.random_reward,
+                learned_reward=compare_playback.learned_reward,
+                random_step=compare_playback.random_step,
+                learned_step=compare_playback.learned_step,
+                random_done=compare_playback.random_done,
+                learned_done=compare_playback.learned_done,
+                is_paused=compare_playback.is_paused,
+                step_delay=menu.step_delay,
+                random_visits=compare_playback.random_visits,
+                learned_visits=compare_playback.learned_visits,
+                random_path=compare_playback.random_path,
+                learned_path=compare_playback.learned_path,
                 cell_size=args.cell_size,
                 buttons=playback_buttons,
             )
