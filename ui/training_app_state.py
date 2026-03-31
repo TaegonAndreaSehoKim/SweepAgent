@@ -5,17 +5,18 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from ui.training_app_core import PreviewPolicy, TrainingRunner
+from ui.training_app_core import PreviewPolicy, TrainingRunner, get_default_algorithm_params
 
 
 @dataclass
 class MenuSelection:
     """Current selections from the menu screen."""
     map_name: str
-    model_name: str = "q_learning"
+    algorithm_name: str = "q_learning"
     result_view: str = "single_playback"
     episodes: int = 5000
     step_delay: float = 0.5
+    algorithm_params: dict[str, float] = field(default_factory=lambda: get_default_algorithm_params("q_learning"))
     open_dropdown: str | None = None
 
 
@@ -48,7 +49,7 @@ class SinglePlaybackState:
     """Single rollout playback state."""
     env: Any | None = None
     agent: Any | None = None
-    model_name: str | None = None
+    algorithm_name: str | None = None
     state: Any | None = None
     done: bool = False
     total_reward: float = 0.0
@@ -66,6 +67,7 @@ class ComparePlaybackState:
     random_env: Any | None = None
     learned_env: Any | None = None
     learned_agent: Any | None = None
+    learned_algorithm_name: str | None = None
 
     random_state: Any | None = None
     learned_state: Any | None = None

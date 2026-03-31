@@ -8,7 +8,9 @@ from utils.ui_utils import reset_panel_state
 from ui.training_app_core import (
     PREVIEW_STEP_INTERVAL_SEC,
     TRAINING_LINE_PATTERN,
+    build_training_command,
     get_checkpoint_path,
+    is_trainable_algorithm,
 )
 from ui.training_app_state import (
     ComparePlaybackState,
@@ -66,9 +68,17 @@ def start_selected_flow(
         seed=train_seed,
     )
 
-    if menu.model_name == "q_learning":
+    if is_trainable_algorithm(menu.algorithm_name):
         training.runner = type(training.runner)()
-        training.runner.start(map_name=menu.map_name, episodes=menu.episodes, seed=train_seed)
+        training.runner.start(
+            build_training_command(
+                algorithm_name=menu.algorithm_name,
+                map_name=menu.map_name,
+                episodes=menu.episodes,
+                seed=train_seed,
+                algorithm_params=menu.algorithm_params,
+            )
+        )
         return "training"
 
     if menu.result_view == "single_playback":
@@ -83,7 +93,7 @@ def start_selected_flow(
             single_playback.visit_counts,
         ) = reset_panel_state(single_playback.env)
         single_playback.agent = None
-        single_playback.model_name = "random_baseline"
+        single_playback.algorithm_name = "random_baseline"
         single_playback.is_paused = False
         single_playback.last_step_time = time.time()
         single_playback.rng = random.Random(random_seed)
@@ -94,6 +104,7 @@ def start_selected_flow(
     compare_playback.random_env.map_name = menu.map_name
     compare_playback.learned_env.map_name = menu.map_name
     compare_playback.learned_agent = None
+    compare_playback.learned_algorithm_name = "random_baseline"
 
     (
         compare_playback.random_state,
@@ -153,6 +164,8 @@ def update_training_from_subprocess(
     if not training.runner.finished:
         return None
 
+    training.log_lines.append(f"[training process finished] return_code={training.runner.return_code}")
+
     if training.runner.return_code != 0:
         return "menu"
 
@@ -164,7 +177,7 @@ def update_training_from_subprocess(
             num_episodes=menu.episodes,
             seed=train_seed,
         )
-        single_playback.model_name = "q_learning"
+        single_playback.algorithm_name = menu.algorithm_name
         (
             single_playback.state,
             single_playback.done,
@@ -187,6 +200,7 @@ def update_training_from_subprocess(
         num_episodes=menu.episodes,
         seed=train_seed,
     )
+    compare_playback.learned_algorithm_name = menu.algorithm_name
 
     (
         compare_playback.random_state,
@@ -276,7 +290,7 @@ def step_single_playback(single_playback: SinglePlaybackState, step_delay: float
     if now - single_playback.last_step_time < step_delay:
         return
 
-    if single_playback.model_name == "q_learning" and single_playback.agent is not None:
+    if single_playback.algorithm_name == "q_learning" and single_playback.agent is not None:
         action = single_playback.agent.get_policy_action(single_playback.state)
     else:
         action = single_playback.rng.randrange(len(single_playback.env.ACTIONS))
@@ -321,10 +335,11 @@ def step_compare_playback(compare_playback: ComparePlaybackState, step_delay: fl
         )
 
     if not compare_playback.learned_done:
-        if compare_playback.learned_agent is not None:
+        if compare_playback.learned_algorithm_name == "q_learning" and compare_playback.learned_agent is not None:
             learned_action = compare_playback.learned_agent.get_policy_action(compare_playback.learned_state)
         else:
             learned_action = compare_playback.rng.randrange(len(compare_playback.learned_env.ACTIONS))
+
         (
             compare_playback.learned_state,
             reward,

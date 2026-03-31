@@ -1,40 +1,37 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from statistics import mean
-from typing import Dict, List
+from typing import Any
+
+import matplotlib
+
+# Use a non-interactive backend so plots can be saved from terminal runs.
+matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
-    # Add the project root so local modules can be imported when run as a script.
     sys.path.append(str(PROJECT_ROOT))
 
 from agents.q_learning_agent import QLearningAgent
-from env.grid_clean_env import GridCleanEnv
-from utils.experiment_utils import build_env, get_checkpoint_path
-
-
-def ensure_output_dirs() -> None:
-    # Create output folders before saving plots, logs, or checkpoints.
-    (PROJECT_ROOT / "outputs" / "plots").mkdir(parents=True, exist_ok=True)
-    (PROJECT_ROOT / "outputs" / "logs").mkdir(parents=True, exist_ok=True)
-    (PROJECT_ROOT / "outputs" / "checkpoints").mkdir(parents=True, exist_ok=True)
+from utils.experiment_utils import build_env
 
 
 def parse_args() -> argparse.Namespace:
-    # Parse command-line arguments for training configuration.
+    """Parse command-line arguments for Q-learning training."""
     parser = argparse.ArgumentParser(
-        description="Train a Q-learning SweepAgent on a selected map preset."
+        description="Train a tabular Q-learning agent for SweepAgent."
     )
     parser.add_argument(
         "--map-name",
         type=str,
         default="default",
-        help="Map preset name (for example: default, harder, wide_room, corridor).",
+        help="Map preset name to train on.",
     )
     parser.add_argument(
         "--episodes",
@@ -46,261 +43,311 @@ def parse_args() -> argparse.Namespace:
         "--seed",
         type=int,
         default=42,
-        help="Random seed used for the Q-learning agent.",
+        help="Random seed used for the agent and checkpoint naming.",
     )
     parser.add_argument(
         "--print-every",
         type=int,
         default=100,
-        help="Print rolling training metrics every N episodes.",
+        help="Print one compact progress line every N episodes.",
+    )
+
+    # Hyperparameters exposed to the UI.
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=0.10,
+        help="Q-learning update step size.",
+    )
+    parser.add_argument(
+        "--discount-factor",
+        type=float,
+        default=0.95,
+        help="Discount factor (gamma).",
+    )
+    parser.add_argument(
+        "--epsilon-start",
+        type=float,
+        default=1.00,
+        help="Initial epsilon for epsilon-greedy exploration.",
+    )
+    parser.add_argument(
+        "--epsilon-decay",
+        type=float,
+        default=0.995,
+        help="Multiplicative epsilon decay applied after each episode.",
+    )
+    parser.add_argument(
+        "--epsilon-min",
+        type=float,
+        default=0.05,
+        help="Minimum epsilon floor.",
     )
     return parser.parse_args()
 
 
-def run_training_episode(
-    env: GridCleanEnv,
-    agent: QLearningAgent,
-) -> Dict[str, float]:
-    # Reset the environment and training metrics for one episode.
+def ensure_output_dirs() -> tuple[Path, Path]:
+    """Create output directories for checkpoints and plots if needed."""
+    checkpoint_dir = PROJECT_ROOT / "outputs" / "checkpoints"
+    plot_dir = PROJECT_ROOT / "outputs" / "plots"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    return checkpoint_dir, plot_dir
+
+
+def get_checkpoint_path(map_name: str, seed: int) -> Path:
+    """Return the map-specific checkpoint path used by the project."""
+    checkpoint_dir, _ = ensure_output_dirs()
+    return checkpoint_dir / f"q_learning_agent_{map_name}_seed_{seed}.json"
+
+
+def moving_average(values: list[float], window: int = 100) -> list[float]:
+    """Compute a simple trailing moving average."""
+    if not values:
+        return []
+
+    output: list[float] = []
+    for idx in range(len(values)):
+        start = max(0, idx - window + 1)
+        output.append(mean(values[start : idx + 1]))
+    return output
+
+
+def save_line_plot(
+    values: list[float],
+    title: str,
+    y_label: str,
+    output_path: Path,
+) -> Path:
+    """Save a single line plot for one metric."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    plt.figure(figsize=(8, 4.5))
+    plt.plot(values)
+    plt.title(title)
+    plt.xlabel("Episode")
+    plt.ylabel(y_label)
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+    return output_path
+
+
+def serialize_q_table(q_table: Any) -> dict[str, list[float]]:
+    """
+    Convert an in-memory Q-table into a JSON-safe dictionary.
+
+    This assumes q_table behaves like:
+        {state_tuple: [q0, q1, q2, q3], ...}
+    """
+    serialized: dict[str, list[float]] = {}
+    for state, q_values in q_table.items():
+        state_key = str(tuple(state))
+        serialized[state_key] = [float(x) for x in q_values]
+    return serialized
+
+
+def maybe_get_q_table(agent: QLearningAgent) -> dict[Any, Any]:
+    """
+    Retrieve the internal q_table from the agent.
+
+    This project has used JSON checkpoint serialization already, so a q_table-like
+    structure should exist. If your agent uses a different attribute name, adjust here.
+    """
+    if hasattr(agent, "q_table"):
+        return getattr(agent, "q_table")
+    raise AttributeError("QLearningAgent does not expose a 'q_table' attribute.")
+
+
+def build_agent(args: argparse.Namespace) -> QLearningAgent:
+    """
+    Create the Q-learning agent with UI-configurable hyperparameters.
+
+    If your QLearningAgent constructor uses different keyword names,
+    update only this function.
+    """
+    return QLearningAgent(
+        learning_rate=args.learning_rate,
+        discount_factor=args.discount_factor,
+        epsilon=args.epsilon_start,
+        epsilon_decay=args.epsilon_decay,
+        epsilon_min=args.epsilon_min,
+        seed=args.seed,
+    )
+
+
+def train_one_episode(env, agent: QLearningAgent) -> dict[str, float]:
+    """Run one full training episode and return summary metrics."""
     state = env.reset()
     done = False
-    total_reward = 0
-    final_info: Dict[str, float] = {}
+    total_reward = 0.0
+    final_info: dict[str, float] = {}
 
     while not done:
-        # Choose an action, step the environment, and update the Q-table.
         action = agent.select_action(state, training=True)
         next_state, reward, done, info = env.step(action)
 
-        agent.update(
-            state=state,
-            action=action,
-            reward=reward,
-            next_state=next_state,
-            done=done,
-        )
+        # Standard one-step tabular Q-learning update.
+        agent.update(state, action, reward, next_state, done)
 
         state = next_state
         total_reward += reward
         final_info = info
-
-    # Decay epsilon after the episode ends.
-    agent.decay_epsilon()
 
     return {
         "total_reward": total_reward,
-        "steps_taken": final_info["steps_taken"],
-        "cleaned_tiles": final_info["cleaned_tiles"],
-        "total_dirty_tiles": final_info["total_dirty_tiles"],
-        "cleaned_ratio": final_info["cleaned_ratio"],
-        "success": 1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0,
-        "epsilon": agent.epsilon,
+        "steps_taken": float(final_info["steps_taken"]),
+        "cleaned_ratio": float(final_info["cleaned_ratio"]),
+        "success": 1.0 if float(final_info["cleaned_ratio"]) == 1.0 else 0.0,
     }
 
 
-def run_greedy_episode(
-    env: GridCleanEnv,
+def maybe_decay_epsilon(agent: QLearningAgent) -> None:
+    """
+    Decay epsilon once per episode if the agent exposes either:
+    - decay_epsilon()
+    - epsilon / epsilon_decay / epsilon_min fields
+    """
+    if hasattr(agent, "decay_epsilon") and callable(getattr(agent, "decay_epsilon")):
+        agent.decay_epsilon()
+        return
+
+    if all(hasattr(agent, name) for name in ("epsilon", "epsilon_decay", "epsilon_min")):
+        agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
+
+
+def get_current_epsilon(agent: QLearningAgent) -> float:
+    """Read the current epsilon value if available."""
+    if hasattr(agent, "epsilon"):
+        return float(agent.epsilon)
+    return 0.0
+
+
+def save_checkpoint(
+    checkpoint_path: Path,
+    args: argparse.Namespace,
     agent: QLearningAgent,
-    render: bool = True,
-) -> Dict[str, float]:
-    # Run one evaluation episode with exploration disabled.
-    state = env.reset()
-    done = False
-    total_reward = 0
-    final_info: Dict[str, float] = {}
-    action_history: List[str] = []
+) -> Path:
+    """
+    Save checkpoint in the same schema expected by QLearningAgent.load().
+    """
+    if hasattr(agent, "save") and callable(getattr(agent, "save")):
+        agent.save(checkpoint_path)
+        return checkpoint_path
 
-    if render:
-        print("\n=== Greedy Policy Episode Start ===")
-        env.render()
+    if hasattr(agent, "to_dict") and callable(getattr(agent, "to_dict")):
+        payload = agent.to_dict()
+        payload["metadata"] = {
+            "algorithm": "q_learning",
+            "map_name": args.map_name,
+            "episodes": args.episodes,
+            "seed": args.seed,
+            "hyperparameters": {
+                "learning_rate": args.learning_rate,
+                "discount_factor": args.discount_factor,
+                "epsilon_start": args.epsilon_start,
+                "epsilon_decay": args.epsilon_decay,
+                "epsilon_min": args.epsilon_min,
+            },
+        }
 
-    while not done:
-        # Always choose the current best action from the learned policy.
-        action = agent.get_policy_action(state)
-        next_state, reward, done, info = env.step(action)
+        with checkpoint_path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        return checkpoint_path
 
-        total_reward += reward
-        action_history.append(env.ACTION_NAMES[action])
-
-        state = next_state
-        final_info = info
-
-        if render:
-            print(f"\naction={action} ({env.ACTION_NAMES[action]})")
-            print(f"reward={reward}")
-            env.render()
-
-    result = {
-        "total_reward": total_reward,
-        "steps_taken": final_info["steps_taken"],
-        "cleaned_tiles": final_info["cleaned_tiles"],
-        "total_dirty_tiles": final_info["total_dirty_tiles"],
-        "cleaned_ratio": final_info["cleaned_ratio"],
-        "success": 1.0 if final_info["cleaned_ratio"] == 1.0 else 0.0,
-    }
-
-    if render:
-        print("\n=== Greedy Policy Episode Summary ===")
-        print(result)
-        print("action_history:", action_history)
-
-    return result
+    raise AttributeError("QLearningAgent must provide save() or to_dict() for checkpoint serialization.")
 
 
-def moving_average(values: List[float], window_size: int) -> List[float]:
-    # Smooth a metric series with a simple trailing moving average.
-    smoothed: List[float] = []
+def main() -> None:
+    args = parse_args()
 
-    for idx in range(len(values)):
-        start_idx = max(0, idx - window_size + 1)
-        window = values[start_idx : idx + 1]
-        smoothed.append(sum(window) / len(window))
+    env = build_env(map_name=args.map_name)
+    agent = build_agent(args)
 
-    return smoothed
+    _, plot_dir = ensure_output_dirs()
+    checkpoint_path = get_checkpoint_path(map_name=args.map_name, seed=args.seed)
 
+    rewards: list[float] = []
+    cleaned_ratios: list[float] = []
+    successes: list[float] = []
+    epsilons: list[float] = []
 
-def save_training_plots(
-    rewards: List[float],
-    cleaned_ratios: List[float],
-    success_rates: List[float],
-    epsilons: List[float],
-    map_name: str,
-) -> None:
-    # Create output folders before saving figures.
-    ensure_output_dirs()
+    print(f"Training Q-learning agent on map='{args.map_name}'...")
+    print(f"episodes: {args.episodes}")
+    print(f"seed: {args.seed}")
+    print(f"learning_rate: {args.learning_rate}")
+    print(f"discount_factor: {args.discount_factor}")
+    print(f"epsilon_start: {args.epsilon_start}")
+    print(f"epsilon_decay: {args.epsilon_decay}")
+    print(f"epsilon_min: {args.epsilon_min}")
 
-    reward_ma = moving_average(rewards, window_size=50)
-    cleaned_ma = moving_average(cleaned_ratios, window_size=50)
-    success_ma = moving_average(success_rates, window_size=50)
+    for episode_idx in range(1, args.episodes + 1):
+        episode_result = train_one_episode(env=env, agent=agent)
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(rewards, label="episode reward")
-    plt.plot(reward_ma, label="reward (moving average 50)")
-    plt.xlabel("Episode")
-    plt.ylabel("Total Reward")
-    plt.title(f"Q-Learning Training Reward ({map_name} map)")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / f"training_reward_{map_name}.png")
-    plt.close()
+        rewards.append(episode_result["total_reward"])
+        cleaned_ratios.append(episode_result["cleaned_ratio"])
+        successes.append(episode_result["success"])
+        epsilons.append(get_current_epsilon(agent))
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(cleaned_ratios, label="episode cleaned ratio")
-    plt.plot(cleaned_ma, label="cleaned ratio (moving average 50)")
-    plt.xlabel("Episode")
-    plt.ylabel("Cleaned Ratio")
-    plt.title(f"Q-Learning Cleaning Performance ({map_name} map)")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(
-        PROJECT_ROOT / "outputs" / "plots" / f"training_cleaned_ratio_{map_name}.png"
-    )
-    plt.close()
+        maybe_decay_epsilon(agent)
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(success_rates, label="episode success")
-    plt.plot(success_ma, label="success rate (moving average 50)")
-    plt.xlabel("Episode")
-    plt.ylabel("Success")
-    plt.title(f"Q-Learning Success Trend ({map_name} map)")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / f"training_success_{map_name}.png")
-    plt.close()
-
-    plt.figure(figsize=(10, 5))
-    plt.plot(epsilons, label="epsilon")
-    plt.xlabel("Episode")
-    plt.ylabel("Epsilon")
-    plt.title(f"Exploration Decay ({map_name} map)")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(PROJECT_ROOT / "outputs" / "plots" / f"training_epsilon_{map_name}.png")
-    plt.close()
-
-
-def train_q_learning(
-    map_name: str = "default",
-    num_episodes: int = 1000,
-    seed: int = 42,
-    print_every: int = 100,
-) -> QLearningAgent:
-    # Build the shared environment preset and initialize the agent.
-    env = build_env(map_name=map_name)
-    agent = QLearningAgent(
-        action_space_size=len(env.ACTIONS),
-        learning_rate=0.1,
-        discount_factor=0.99,
-        epsilon=1.0,
-        epsilon_decay=0.995,
-        epsilon_min=0.05,
-        seed=seed,
-    )
-
-    rewards: List[float] = []
-    cleaned_ratios: List[float] = []
-    success_rates: List[float] = []
-    epsilons: List[float] = []
-
-    for episode in range(1, num_episodes + 1):
-        result = run_training_episode(env=env, agent=agent)
-
-        rewards.append(result["total_reward"])
-        cleaned_ratios.append(result["cleaned_ratio"])
-        success_rates.append(result["success"])
-        epsilons.append(result["epsilon"])
-
-        if episode % print_every == 0:
-            recent_rewards = rewards[-print_every:]
-            recent_cleaned = cleaned_ratios[-print_every:]
-            recent_success = success_rates[-print_every:]
+        if episode_idx % args.print_every == 0 or episode_idx == args.episodes:
+            start_idx = max(0, len(rewards) - args.print_every)
+            avg_reward = mean(rewards[start_idx:])
+            avg_cleaned_ratio = mean(cleaned_ratios[start_idx:])
+            success_rate = mean(successes[start_idx:])
+            current_epsilon = get_current_epsilon(agent)
 
             print(
-                f"Episode {episode}/{num_episodes} | "
-                f"avg_reward={mean(recent_rewards):.2f} | "
-                f"avg_cleaned_ratio={mean(recent_cleaned):.2%} | "
-                f"success_rate={mean(recent_success):.2%} | "
-                f"epsilon={agent.epsilon:.4f}"
+                f"Episode {episode_idx}/{args.episodes} | "
+                f"avg_reward={avg_reward:.2f} | "
+                f"avg_cleaned_ratio={avg_cleaned_ratio * 100:.2f}% | "
+                f"success_rate={success_rate * 100:.2f}% | "
+                f"epsilon={current_epsilon:.4f}"
             )
 
-    save_training_plots(
-        rewards=rewards,
-        cleaned_ratios=cleaned_ratios,
-        success_rates=success_rates,
-        epsilons=epsilons,
-        map_name=map_name,
+    reward_plot_path = save_line_plot(
+        values=moving_average(rewards, window=100),
+        title=f"SweepAgent Training Reward ({args.map_name})",
+        y_label="Reward (100-episode moving average)",
+        output_path=plot_dir / f"training_reward_{args.map_name}.png",
+    )
+    cleaned_plot_path = save_line_plot(
+        values=moving_average(cleaned_ratios, window=100),
+        title=f"SweepAgent Training Cleaned Ratio ({args.map_name})",
+        y_label="Cleaned Ratio (100-episode moving average)",
+        output_path=plot_dir / f"training_cleaned_ratio_{args.map_name}.png",
+    )
+    success_plot_path = save_line_plot(
+        values=moving_average(successes, window=100),
+        title=f"SweepAgent Training Success Rate ({args.map_name})",
+        y_label="Success Rate (100-episode moving average)",
+        output_path=plot_dir / f"training_success_{args.map_name}.png",
+    )
+    epsilon_plot_path = save_line_plot(
+        values=epsilons,
+        title=f"SweepAgent Epsilon Decay ({args.map_name})",
+        y_label="Epsilon",
+        output_path=plot_dir / f"training_epsilon_{args.map_name}.png",
     )
 
-    checkpoint_path = get_checkpoint_path(map_name=map_name, seed=seed)
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    agent.save(checkpoint_path)
+    save_checkpoint(checkpoint_path=checkpoint_path, args=args, agent=agent)
 
-    print("\n=== Final Training Summary ===")
-    print(f"map_name: {map_name}")
-    print(f"episodes: {num_episodes}")
-    print(f"final epsilon: {agent.epsilon:.4f}")
-    print(f"q_table states learned: {len(agent.q_table)}")
-    print(f"last 100 avg reward: {mean(rewards[-100:]):.2f}")
-    print(f"last 100 avg cleaned ratio: {mean(cleaned_ratios[-100:]):.2%}")
-    print(f"last 100 success rate: {mean(success_rates[-100:]):.2%}")
-    print(f"checkpoint saved to: {checkpoint_path.relative_to(PROJECT_ROOT)}")
+    q_table = maybe_get_q_table(agent)
+    final_window = min(100, len(rewards))
 
-    run_greedy_episode(env=env, agent=agent, render=True)
-
-    print("\nSaved plots:")
-    print(f"outputs/plots/training_reward_{map_name}.png")
-    print(f"outputs/plots/training_cleaned_ratio_{map_name}.png")
-    print(f"outputs/plots/training_success_{map_name}.png")
-    print(f"outputs/plots/training_epsilon_{map_name}.png")
-
-    return agent
+    print("\n=== Training Complete ===")
+    print(f"checkpoint: {checkpoint_path}")
+    print(f"reward_plot: {reward_plot_path}")
+    print(f"cleaned_plot: {cleaned_plot_path}")
+    print(f"success_plot: {success_plot_path}")
+    print(f"epsilon_plot: {epsilon_plot_path}")
+    print(f"learned_q_states: {len(q_table)}")
+    print(f"final_epsilon: {get_current_epsilon(agent):.4f}")
+    print(f"last_{final_window}_avg_reward: {mean(rewards[-final_window:]):.2f}")
+    print(f"last_{final_window}_avg_cleaned_ratio: {mean(cleaned_ratios[-final_window:]) * 100:.2f}%")
+    print(f"last_{final_window}_success_rate: {mean(successes[-final_window:]) * 100:.2f}%")
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    train_q_learning(
-        map_name=args.map_name,
-        num_episodes=args.episodes,
-        seed=args.seed,
-        print_every=args.print_every,
-    )
+    main()

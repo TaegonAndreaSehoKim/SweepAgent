@@ -36,6 +36,7 @@ from ui.training_app_core import (
     PreviewPolicy,
     clamp_step_delay,
     compute_training_window_height,
+    get_default_algorithm_params,
 )
 from ui.training_app_handlers import (
     cancel_training,
@@ -86,16 +87,15 @@ def main() -> None:
     pygame.init()
     fonts = load_fonts()
 
-    # Current menu selections.
     menu = MenuSelection(
         map_name="charge_required_v2" if "charge_required_v2" in MAP_PRESETS else list(MAP_PRESETS.keys())[0],
-        model_name="q_learning",
+        algorithm_name="q_learning",
         result_view="single_playback",
         episodes=5000,
         step_delay=0.5,
+        algorithm_params=get_default_algorithm_params("q_learning"),
     )
 
-    # App state containers.
     training = TrainingState()
     preview = PreviewState()
     single_playback = SinglePlaybackState()
@@ -107,7 +107,6 @@ def main() -> None:
 
     app_state = "menu"
 
-    # Build the initial mini preview env.
     rebuild_training_preview_env(
         preview_state=preview,
         menu=menu,
@@ -189,7 +188,7 @@ def main() -> None:
                 y=720,
                 w=260,
                 h=54,
-                label="Start Training" if menu.model_name == "q_learning" else "Start Preview",
+                label="Start Training" if menu.algorithm_name != "random_baseline" else "Start Preview",
                 on_click=lambda: None,
                 primary=True,
             )
@@ -225,10 +224,6 @@ def main() -> None:
                 training.log_scroll_offset -= event.y
                 training.log_scroll_offset = max(0, min(training.log_scroll_offset, max_scroll))
 
-        # ---------------------------
-        # Background updates by state
-        # ---------------------------
-
         if app_state == "training":
             next_state = update_training_from_subprocess(
                 menu=menu,
@@ -255,10 +250,6 @@ def main() -> None:
         if app_state == "playback_compare":
             step_compare_playback(compare_playback, menu.step_delay)
 
-        # ----------
-        # Rendering
-        # ----------
-
         if app_state == "menu":
             if screen.get_width() != MENU_WIDTH or screen.get_height() != MENU_HEIGHT:
                 screen = pygame.display.set_mode((MENU_WIDTH, MENU_HEIGHT))
@@ -269,7 +260,7 @@ def main() -> None:
                 height=MENU_HEIGHT,
                 fonts=fonts,
                 map_name=menu.map_name,
-                model_name=menu.model_name,
+                model_name=menu.algorithm_name,
                 result_view=menu.result_view,
                 episodes=menu.episodes,
                 step_delay=menu.step_delay,
@@ -339,7 +330,8 @@ def main() -> None:
                                         seed=args.seed,
                                     )
                                 elif menu.open_dropdown == "model":
-                                    menu.model_name = MODEL_OPTIONS[idx]
+                                    menu.algorithm_name = MODEL_OPTIONS[idx]
+                                    menu.algorithm_params = get_default_algorithm_params(menu.algorithm_name)
                                 elif menu.open_dropdown == "episodes":
                                     menu.episodes = EPISODE_OPTIONS[idx]
                                 elif menu.open_dropdown == "delay":
@@ -363,7 +355,7 @@ def main() -> None:
                 height=training_height,
                 fonts=fonts,
                 map_name=menu.map_name,
-                model_name=menu.model_name,
+                model_name=menu.algorithm_name,
                 episodes=menu.episodes,
                 latest_metrics=training.latest_metrics,
                 log_lines=training.log_lines,
@@ -430,7 +422,7 @@ def main() -> None:
                 width=playback_width,
                 height=playback_height,
                 fonts=fonts,
-                title_text="Learned Greedy Agent" if single_playback.model_name == "q_learning" else "Random Baseline",
+                title_text="Learned Greedy Agent" if single_playback.algorithm_name == "q_learning" else "Random Baseline",
                 env=single_playback.env,
                 total_reward=single_playback.total_reward,
                 step_idx=single_playback.step_idx,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import queue
 import random
@@ -71,6 +72,17 @@ EPSILON_FILL = (111, 66, 193)
 SCROLL_TRACK = (236, 240, 244)
 SCROLL_THUMB = (173, 181, 189)
 
+ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
+    "q_learning": {
+        "learning_rate": 0.10,
+        "discount_factor": 0.95,
+        "epsilon_start": 1.00,
+        "epsilon_decay": 0.995,
+        "epsilon_min": 0.05,
+    },
+    "random_baseline": {},
+}
+
 
 @dataclass
 class Button:
@@ -95,20 +107,7 @@ class TrainingRunner:
         self.finished = False
         self.return_code: int | None = None
 
-    def start(self, map_name: str, episodes: int, seed: int) -> None:
-        command = [
-            sys.executable,
-            "scripts/train_q_learning.py",
-            "--map-name",
-            map_name,
-            "--episodes",
-            str(episodes),
-            "--seed",
-            str(seed),
-            "--print-every",
-            "100",
-        ]
-
+    def start(self, command: list[str]) -> None:
         self.process = subprocess.Popen(
             command,
             cwd=PROJECT_ROOT,
@@ -210,6 +209,46 @@ class PreviewPolicy:
         return best_action
 
 
+def get_default_algorithm_params(algorithm_name: str) -> dict[str, float]:
+    """Return a copy of default hyperparameters for the selected algorithm."""
+    return copy.deepcopy(ALGORITHM_DEFAULT_PARAMS.get(algorithm_name, {}))
+
+
+def is_trainable_algorithm(algorithm_name: str) -> bool:
+    """Return whether this selection launches a training subprocess."""
+    return algorithm_name != "random_baseline"
+
+
+def build_training_command(
+    algorithm_name: str,
+    map_name: str,
+    episodes: int,
+    seed: int,
+    algorithm_params: dict[str, float] | None = None,
+) -> list[str]:
+    """
+    Build the subprocess command for the selected training algorithm.
+
+    For now, keep the runtime path stable and do not forward UI hyperparameters
+    until train_q_learning.py explicitly supports those CLI options.
+    """
+    if algorithm_name == "q_learning":
+        return [
+            sys.executable,
+            "scripts/train_q_learning.py",
+            "--map-name",
+            map_name,
+            "--episodes",
+            str(episodes),
+            "--seed",
+            str(seed),
+            "--print-every",
+            "100",
+        ]
+
+    raise ValueError(f"Unsupported training algorithm: {algorithm_name}")
+
+
 def clamp_step_delay(value: float, min_step_delay: float, max_step_delay: float) -> float:
     """Clamp playback delay to the allowed UI range."""
     return max(min_step_delay, min(max_step_delay, value))
@@ -233,5 +272,5 @@ def compute_training_window_height() -> int:
 
 
 def get_checkpoint_path(map_name: str, seed: int) -> Path:
-    """Return the checkpoint file path used by the q-learning training script."""
+    """Return the q-learning checkpoint file path used by the training script."""
     return PROJECT_ROOT / "outputs" / "checkpoints" / f"q_learning_agent_{map_name}_seed_{seed}.json"
