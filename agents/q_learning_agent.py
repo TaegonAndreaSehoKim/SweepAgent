@@ -13,11 +13,11 @@ class QLearningAgent:
     def __init__(
         self,
         action_space_size: int = 4,
-        learning_rate: float = 0.1,
-        discount_factor: float = 0.99,
+        learning_rate: float = 0.05,
+        discount_factor: float = 0.995,
         epsilon: float = 1.0,
-        epsilon_decay: float = 0.995,
-        epsilon_min: float = 0.05,
+        epsilon_decay: float = 0.999,
+        epsilon_min: float = 0.10,
         seed: int | None = None,
     ) -> None:
         # Store the core Q-learning hyperparameters.
