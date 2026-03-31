@@ -35,14 +35,18 @@ PATH_RECENT_COLOR = (29, 78, 216)
 HEATMAP_COLOR = (255, 99, 71)
 
 TEXT_COLOR = (33, 37, 41)
+MUTED_TEXT_COLOR = (90, 98, 108)
 SUCCESS_COLOR = (25, 135, 84)
 FAIL_COLOR = (220, 53, 69)
+PANEL_BORDER_COLOR = (206, 212, 218)
+INFO_BG_COLOR = (255, 255, 255)
 
 WINDOW_PADDING_X = 24
 WINDOW_PADDING_Y = 24
 TOP_PANEL_HEIGHT = 80
 PANEL_HEADER_HEIGHT = 120
 PANEL_GAP = 24
+BOTTOM_INFO_HEIGHT = 150
 
 MIN_STEP_DELAY = 0.1
 MAX_STEP_DELAY = 1.5
@@ -311,14 +315,14 @@ def draw_panel(
     title_font: pygame.font.Font,
     body_font: pygame.font.Font,
     small_font: pygame.font.Font,
-) -> None:
+) -> pygame.Rect:
     title_surface = title_font.render(panel_title, True, TEXT_COLOR)
     screen.blit(title_surface, (panel_left, panel_top))
 
     subtitle_surface = small_font.render(
         f"Map: {getattr(env, 'map_name', 'unknown')}",
         True,
-        TEXT_COLOR,
+        MUTED_TEXT_COLOR,
     )
     screen.blit(subtitle_surface, (panel_left, panel_top + 36))
 
@@ -384,7 +388,14 @@ def draw_panel(
         panel_width + 16,
         PANEL_HEADER_HEIGHT + env.rows * cell_size + 16,
     )
-    pygame.draw.rect(screen, GRID_LINE_COLOR, panel_rect, width=2, border_radius=8)
+    pygame.draw.rect(screen, PANEL_BORDER_COLOR, panel_rect, width=2, border_radius=8)
+
+    return pygame.Rect(
+        grid_left,
+        grid_top,
+        env.cols * cell_size,
+        env.rows * cell_size,
+    )
 
 
 def draw_top_controls(
@@ -411,6 +422,118 @@ def draw_top_controls(
     state_surface = small_font.render(state_text, True, TEXT_COLOR)
     state_rect = state_surface.get_rect(topright=(width - WINDOW_PADDING_X, 20))
     screen.blit(state_surface, state_rect)
+
+
+def draw_legend(
+    screen: pygame.Surface,
+    left: int,
+    top: int,
+    small_font: pygame.font.Font,
+) -> None:
+    items = [
+        ("Wall", WALL_COLOR),
+        ("Dirty", DIRTY_COLOR),
+        ("Cleaned", CLEANED_COLOR),
+        ("Charger", CHARGER_COLOR),
+        ("Heatmap", HEATMAP_COLOR),
+        ("Path", PATH_COLOR),
+    ]
+
+    x = left
+    for label, color in items:
+        swatch_rect = pygame.Rect(x, top + 2, 16, 16)
+        pygame.draw.rect(screen, color, swatch_rect)
+        pygame.draw.rect(screen, GRID_LINE_COLOR, swatch_rect, width=1)
+
+        text_surface = small_font.render(label, True, TEXT_COLOR)
+        screen.blit(text_surface, (x + 24, top))
+        x += 110
+
+
+def get_hover_info(
+    env: GridCleanEnv,
+    visit_counts: dict[Tuple[int, int], int],
+    grid_rect: pygame.Rect,
+    mouse_pos: Tuple[int, int],
+    cell_size: int,
+) -> list[str] | None:
+    if not grid_rect.collidepoint(mouse_pos):
+        return None
+
+    local_x = mouse_pos[0] - grid_rect.left
+    local_y = mouse_pos[1] - grid_rect.top
+
+    col = local_x // cell_size
+    row = local_y // cell_size
+
+    if row < 0 or row >= env.rows or col < 0 or col >= env.cols:
+        return None
+
+    tile_type = get_tile_type(env, row, col)
+    visits = visit_counts.get((row, col), 0)
+
+    details = [
+        f"Tile: ({row}, {col})",
+        f"Type: {tile_type}",
+        f"Visits: {visits}",
+    ]
+
+    if (row, col) in env.dirty_index_map:
+        dirty_idx = env.dirty_index_map[(row, col)]
+        is_cleaned = ((env.cleaned_mask >> dirty_idx) & 1) == 1
+        details.append(f"Dirty state: {'cleaned' if is_cleaned else 'dirty'}")
+
+    if env._is_charger(row, col):
+        details.append("Charger: yes")
+
+    return details
+
+
+def draw_bottom_info(
+    screen: pygame.Surface,
+    width: int,
+    height: int,
+    small_font: pygame.font.Font,
+    hover_title: str | None,
+    hover_lines: list[str] | None,
+) -> None:
+    panel_rect = pygame.Rect(
+        WINDOW_PADDING_X,
+        height - BOTTOM_INFO_HEIGHT + 8,
+        width - 2 * WINDOW_PADDING_X,
+        BOTTOM_INFO_HEIGHT - 16,
+    )
+    pygame.draw.rect(screen, INFO_BG_COLOR, panel_rect, border_radius=8)
+    pygame.draw.rect(screen, PANEL_BORDER_COLOR, panel_rect, width=2, border_radius=8)
+
+    draw_legend(
+        screen=screen,
+        left=panel_rect.left + 16,
+        top=panel_rect.top + 14,
+        small_font=small_font,
+    )
+
+    if hover_title is None or hover_lines is None:
+        info_text = small_font.render(
+            "Hover over a tile to inspect its details.",
+            True,
+            MUTED_TEXT_COLOR,
+        )
+        info_rect = info_text.get_rect(topright=(panel_rect.right - 16, panel_rect.top + 14))
+        screen.blit(info_text, info_rect)
+        return
+
+    title_surface = small_font.render(hover_title, True, TEXT_COLOR)
+    title_rect = title_surface.get_rect(topright=(panel_rect.right - 16, panel_rect.top + 14))
+    screen.blit(title_surface, title_rect)
+
+    y = panel_rect.top + 38
+    line_gap = 19
+    for line in hover_lines:
+        line_surface = small_font.render(line, True, MUTED_TEXT_COLOR)
+        line_rect = line_surface.get_rect(topright=(panel_rect.right - 16, y))
+        screen.blit(line_surface, line_rect)
+        y += line_gap
 
 
 def reset_panel_state(env: GridCleanEnv) -> tuple[Tuple[int, int, int, int], bool, float, int, list[Tuple[int, int]], dict[Tuple[int, int], int]]:
@@ -446,7 +569,7 @@ def run_ui_compare(
         + panel_width
         + WINDOW_PADDING_X
     )
-    height = TOP_PANEL_HEIGHT + panel_height + WINDOW_PADDING_Y
+    height = TOP_PANEL_HEIGHT + panel_height + BOTTOM_INFO_HEIGHT + WINDOW_PADDING_Y
 
     screen = pygame.display.set_mode((width, height))
     clock = pygame.time.Clock()
@@ -524,7 +647,7 @@ def run_ui_compare(
             small_font=small_font,
         )
 
-        draw_panel(
+        random_grid_rect = draw_panel(
             screen=screen,
             panel_title="Random Agent",
             env=random_env,
@@ -542,7 +665,7 @@ def run_ui_compare(
             small_font=small_font,
         )
 
-        draw_panel(
+        learned_grid_rect = draw_panel(
             screen=screen,
             panel_title="Learned Greedy Agent",
             env=learned_env,
@@ -558,6 +681,42 @@ def run_ui_compare(
             title_font=body_font,
             body_font=body_font,
             small_font=small_font,
+        )
+
+        mouse_pos = pygame.mouse.get_pos()
+
+        hover_title = None
+        hover_lines = None
+
+        random_hover = get_hover_info(
+            env=random_env,
+            visit_counts=random_visits,
+            grid_rect=random_grid_rect,
+            mouse_pos=mouse_pos,
+            cell_size=cell_size,
+        )
+        learned_hover = get_hover_info(
+            env=learned_env,
+            visit_counts=learned_visits,
+            grid_rect=learned_grid_rect,
+            mouse_pos=mouse_pos,
+            cell_size=cell_size,
+        )
+
+        if random_hover is not None:
+            hover_title = "Hover: Random Agent"
+            hover_lines = random_hover
+        elif learned_hover is not None:
+            hover_title = "Hover: Learned Agent"
+            hover_lines = learned_hover
+
+        draw_bottom_info(
+            screen=screen,
+            width=width,
+            height=height,
+            small_font=small_font,
+            hover_title=hover_title,
+            hover_lines=hover_lines,
         )
 
         pygame.display.flip()
