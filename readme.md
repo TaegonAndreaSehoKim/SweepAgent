@@ -1,12 +1,19 @@
 # SweepAgent
 
-SweepAgent is a reinforcement learning project where a grid-based vacuum agent learns efficient cleaning policies in a room with walls and dirty tiles.
+SweepAgent is a reinforcement learning project where a grid-based vacuum agent learns efficient cleaning policies in a room with walls, dirty tiles, battery limits, charging stations, and an interactive program-based UI.
 
 ## Project Goal
 
-The goal of SweepAgent is to train a self-learning agent that can clean a grid-based room more efficiently than a random policy.
+The goal of SweepAgent is to train a self-learning agent that can clean a grid-based room more efficiently than a random policy, and to present the learned behavior through reproducible evaluation, visualization, and an interactive UI.
 
-The project started with a simple environment and baseline agent, and now includes Q-learning, GIF-based policy visualization, multi-map benchmarking, and reusable experiment checkpoints.
+The project started with a simple environment and baseline agent, and now includes:
+- Q-learning
+- GIF-based policy visualization
+- multi-map benchmarking
+- reusable experiment checkpoints
+- battery-constrained environments
+- charging-station-aware behavior
+- an interactive pygame-based training and playback UI
 
 ## Current Status
 
@@ -26,9 +33,23 @@ Completed:
 - multi-map benchmarking across several layouts
 - shared experiment utilities for environment creation and checkpoint reuse
 - map-specific checkpoint saving and loading
+- battery-constrained environment variants
+- battery-aware Q-learning state
+- charging station tiles and recharge logic
+- charger-aware reward shaping
+- charger behavior learning on `charging_demo`
+- charge-required behavior validation on `charge_required_v2`
+- multi-seed validation for charger-aware behavior
+- first program-based UI prototype using pygame
+- menu-based map / model / playback selection
+- training screen with live logs and mini rollout preview
+- single playback and compare playback UI modes
+- UI module split into core / state / handlers / views
 
 Next ideas:
-- add battery constraints and charging stations
+- stabilize the refactored training app further
+- improve compare playback summary UX
+- add richer training trend charts
 - add dynamic obstacles
 - try larger and more difficult room layouts
 - test additional RL methods beyond tabular Q-learning
@@ -39,6 +60,7 @@ The environment is a grid-based room made of:
 - walls (`#`)
 - empty tiles (`.`)
 - dirty tiles (`D`)
+- charging stations (`C`)
 - one robot start position (`R`)
 
 Example map:
@@ -57,6 +79,8 @@ The agent can take four actions:
 - left
 - right
 
+Some maps also include a battery budget. In those maps, every action consumes one unit of battery, and stepping onto a charging station (`C`) restores the battery to full.
+
 ## Reward Design
 
 The current reward setting is:
@@ -67,24 +91,34 @@ The current reward setting is:
 - invalid move / wall collision: `-5`
 - clean all dirty tiles: `+50`
 
+For charging maps, the project also uses charger-aware shaping:
+
+- first recharge in an episode: `+1`
+- successful completion after using recharge: `+10`
+- when the battery is low, a small shaping signal encourages moves toward the nearest charger and discourages moves away from it
+
 An episode ends when:
 - all dirty tiles are cleaned, or
+- the battery is depleted, or
 - the maximum number of steps is reached
 
 ## Rendering and Visualization
 
-The project now supports both text-based rendering and GIF-based visualization.
+The project now supports text rendering, GIF rendering, and an interactive pygame-based UI.
 
 Available visual outputs include:
 - step-by-step terminal rendering for debugging
 - learned greedy policy GIF playback
 - side-by-side comparison GIFs between random and learned agents
+- interactive menu / training / playback screens through `run_training_app.py`
 
-Generated GIF outputs:
+Generated GIF outputs include:
 - `outputs/gifs/learned_policy_harder.gif`
 - `outputs/gifs/comparison_harder.gif`
-
-These visualizations make it much easier to inspect the learned behavior and compare it directly against the random baseline.
+- `outputs/gifs/learned_policy_charging_demo.gif`
+- `outputs/gifs/comparison_charging_demo.gif`
+- `outputs/gifs/learned_policy_charge_required_v2.gif`
+- `outputs/gifs/comparison_charge_required_v2.gif`
 
 ## Project Structure
 
@@ -102,14 +136,21 @@ SweepAgent/
 │   ├── random_agent.py
 │   └── q_learning_agent.py
 ├── utils/
-│   └── experiment_utils.py
+│   ├── experiment_utils.py
+│   └── ui_utils.py
+├── ui/
+│   ├── training_app_core.py
+│   ├── training_app_state.py
+│   ├── training_app_handlers.py
+│   └── training_app_views.py
 ├── scripts/
 │   ├── evaluate_agents.py
 │   ├── train_q_learning.py
 │   ├── compare_agents.py
 │   ├── render_policy_gif.py
 │   ├── render_comparison_gif.py
-│   └── benchmark_maps.py
+│   ├── benchmark_maps.py
+│   └── run_training_app.py
 ├── outputs/
 │   ├── checkpoints/
 │   ├── plots/
@@ -122,7 +163,7 @@ SweepAgent/
 
 ## Current Experiment Workflow
 
-The project now uses shared experiment utilities and map-specific checkpoints so that
+The project uses shared experiment utilities and map-specific checkpoints so that
 training results can be reused across evaluation and visualization scripts.
 
 ### Shared utilities
@@ -145,8 +186,46 @@ Trained Q-learning agents are saved per map:
 - `outputs/checkpoints/q_learning_agent_harder_seed_42.json`
 - `outputs/checkpoints/q_learning_agent_wide_room_seed_42.json`
 - `outputs/checkpoints/q_learning_agent_corridor_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_battery_harder_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_charging_demo_seed_42.json`
+- `outputs/checkpoints/q_learning_agent_charge_required_v2_seed_42.json`
 
 This prevents policies trained on different maps from being mixed together.
+
+## Training App UI Architecture
+
+The interactive training app was refactored into smaller modules for maintainability.
+
+### Module layout
+- `scripts/run_training_app.py`
+  - entry point
+  - pygame loop
+  - screen switching
+  - high-level event routing
+
+- `ui/training_app_state.py`
+  - dataclasses for menu, training, mini-preview, single playback, and compare playback state
+
+- `ui/training_app_handlers.py`
+  - training start/cancel handlers
+  - subprocess output parsing
+  - mini-preview stepping
+  - single/compare playback stepping
+
+- `ui/training_app_core.py`
+  - shared constants
+  - `TrainingRunner`
+  - `PreviewPolicy`
+  - helper utilities
+
+- `ui/training_app_views.py`
+  - rendering logic for menu, training panels, and playback screens
+
+### Why this refactor helps
+- reduces the size of `run_training_app.py`
+- separates state, logic, and rendering concerns
+- makes future UI iteration safer and easier
+- improves readability when debugging training/playback behavior
 
 ## How to Run
 
@@ -189,15 +268,11 @@ By default, this saves:
 python scripts/compare_agents.py
 ```
 
-This script reuses a saved checkpoint when available instead of retraining.
-
 ### 6. Render the learned greedy policy as a GIF
 
 ```bash
 python scripts/render_policy_gif.py
 ```
-
-This script also reuses the saved checkpoint for the selected map.
 
 ### 7. Render a side-by-side comparison GIF
 
@@ -205,22 +280,33 @@ This script also reuses the saved checkpoint for the selected map.
 python scripts/render_comparison_gif.py
 ```
 
-This generates a side-by-side rollout comparing:
-- random agent
-- learned greedy Q-learning agent
-
 ### 8. Run the multi-map benchmark
 
 ```bash
 python scripts/benchmark_maps.py
 ```
 
-This generates:
-- `outputs/logs/map_benchmark_results.csv`
-- `outputs/plots/map_benchmark_success_rate.png`
-- `outputs/plots/map_benchmark_reward.png`
-- `outputs/plots/map_benchmark_steps.png`
-- `outputs/plots/map_benchmark_cleaned_ratio.png`
+### 9. Train and evaluate charger-aware maps
+
+```bash
+python scripts/train_q_learning.py --map-name charging_demo --episodes 3000 --seed 42 --print-every 100
+python scripts/train_q_learning.py --map-name charge_required_v2 --episodes 5000 --seed 42 --print-every 100
+python scripts/compare_agents.py --map-name charge_required_v2 --episodes 5000 --seed 42 --eval-episodes 100
+```
+
+### 10. Launch the interactive training app
+
+```bash
+python scripts/run_training_app.py
+```
+
+Current app capabilities:
+- choose map / model / result-view mode from menu
+- run q-learning training through the UI
+- inspect live logs during training
+- watch a mini rollout preview during training
+- switch to single playback or compare playback after training
+- control playback speed and restart rollouts
 
 ## Current Results
 
@@ -238,12 +324,6 @@ Learned greedy policy over 100 episodes:
 - Average cleaned ratio: `100.00%`
 - Success rate: `100.00%`
 
-Improvement over the random baseline:
-- Reward gain: `170.03`
-- Step reduction: `57.58`
-- Cleaned ratio gain: `9.00 percentage points`
-- Success rate gain: `21.00 percentage points`
-
 ### Harder Map
 
 Random agent evaluation over 100 episodes:
@@ -258,43 +338,27 @@ Learned greedy policy over 100 episodes:
 - Average cleaned ratio: `100.00%`
 - Success rate: `100.00%`
 
-These results show that the learned policy is not only better than the random baseline on the default map, but also remains highly effective on a more difficult room layout.
+### Charge-Required V2
+
+Evaluation over 100 episodes:
+
+| Seed | Avg Reward | Avg Steps | Avg Cleaned Ratio | Success Rate |
+|---|---:|---:|---:|---:|
+| 11 | 81.00 | 20.00 | 100.00% | 100.00% |
+| 22 | 81.00 | 20.00 | 100.00% | 100.00% |
+| 33 | 81.00 | 20.00 | 100.00% | 100.00% |
+
+The random baseline remained at 0% success rate on the same map.
 
 ## Multi-Map Benchmark
 
-To test whether the learned policy remains effective beyond a single room layout, SweepAgent was evaluated on four map presets:
+The learned policy achieved 100% success rate on all four shared map presets:
 - `default`
 - `harder`
 - `wide_room`
 - `corridor`
 
-The benchmark compares a random baseline against a learned greedy Q-learning policy.
-
-### Benchmark Summary
-
-| Map | Agent | Avg Reward | Avg Steps | Avg Cleaned Ratio | Success Rate |
-|---|---|---:|---:|---:|---:|
-| default | Random | -94.03 | 64.58 | 91.00% | 79.00% |
-| default | Learned | 76.00 | 7.00 | 100.00% | 100.00% |
-| harder | Random | -300.97 | 119.86 | 49.25% | 2.00% |
-| harder | Learned | 76.00 | 18.00 | 100.00% | 100.00% |
-| wide_room | Random | -307.48 | 143.36 | 70.50% | 18.00% |
-| wide_room | Learned | 80.00 | 14.00 | 100.00% | 100.00% |
-| corridor | Random | -478.95 | 167.84 | 35.67% | 5.00% |
-| corridor | Learned | 63.00 | 20.00 | 100.00% | 100.00% |
-
-### Benchmark Figures
-
-Generated benchmark plots:
-- `outputs/plots/map_benchmark_success_rate.png`
-- `outputs/plots/map_benchmark_reward.png`
-- `outputs/plots/map_benchmark_steps.png`
-- `outputs/plots/map_benchmark_cleaned_ratio.png`
-
-These figures highlight three important trends:
-1. The learned policy solves every tested map consistently.
-2. The learned policy uses far fewer steps than the random baseline.
-3. The learned policy maintains full cleaning performance even when the room layout becomes more difficult.
+The random baseline degraded significantly as map complexity increased.
 
 ## Roadmap
 
@@ -310,16 +374,25 @@ These figures highlight three important trends:
 - [x] Add more room layouts
 - [x] Add multi-map benchmarking
 - [x] Reuse checkpoints across scripts
-- [ ] Explore more difficulty settings
+- [x] Add battery constraints
+- [x] Add charging stations
+- [x] Train charger-aware behavior
+- [x] Validate charge-required behavior across multiple seeds
+- [x] Add initial program-based UI visualization
+- [x] Refactor UI into state / handlers / core / views modules
+- [ ] Stabilize refactored training app
+- [ ] Add dynamic obstacles
 - [ ] Test additional RL methods
 
 ## Future Extensions
 
 Possible future improvements include:
 - larger and more complex room layouts
-- battery constraints and charging stations
 - dynamic obstacles
+- priority-based cleaning objectives
 - multiple cleaning agents
+- return-to-dock behavior after cleaning
+- richer training charts in the UI
 - deep reinforcement learning methods such as DQN
 
 ## Devlog
