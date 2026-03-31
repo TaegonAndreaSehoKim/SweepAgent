@@ -39,7 +39,9 @@ def rebuild_training_preview_env(
         preview_state.visit_counts,
     ) = reset_panel_state(preview_state.env)
     preview_state.last_step_time = time.time()
-    preview_state.policy = preview_policy_cls(get_checkpoint_path(menu.map_name, seed))
+    preview_state.policy = preview_policy_cls(
+        get_checkpoint_path(menu.map_name, menu.episodes, seed)
+    )
     preview_state.mode_label = "random fallback"
 
 

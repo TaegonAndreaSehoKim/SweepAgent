@@ -95,10 +95,10 @@ def ensure_output_dirs() -> tuple[Path, Path]:
     return checkpoint_dir, plot_dir
 
 
-def get_checkpoint_path(map_name: str, seed: int) -> Path:
-    """Return the map-specific checkpoint path used by the project."""
-    checkpoint_dir, _ = ensure_output_dirs()
-    return checkpoint_dir / f"q_learning_agent_{map_name}_seed_{seed}.json"
+def get_checkpoint_path(map_name: str, episodes: int, seed: int) -> Path:
+    checkpoint_dir = PROJECT_ROOT / "outputs" / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    return checkpoint_dir / f"q_learning_agent_{map_name}_ep_{episodes}_seed_{seed}.json"
 
 
 def moving_average(values: list[float], window: int = 100) -> list[float]:
@@ -265,7 +265,7 @@ def main() -> None:
     agent = build_agent(args)
 
     _, plot_dir = ensure_output_dirs()
-    checkpoint_path = get_checkpoint_path(map_name=args.map_name, seed=args.seed)
+    checkpoint_path = get_checkpoint_path(map_name=args.map_name, episodes=args.episodes, seed=args.seed)
 
     rewards: list[float] = []
     cleaned_ratios: list[float] = []

@@ -69,13 +69,12 @@ def build_q_learning_agent(
     )
 
 
-def get_checkpoint_path(map_name: str, seed: int) -> Path:
-    # Use a map-specific checkpoint name so policies do not get mixed.
+def get_checkpoint_path(map_name: str, episodes: int, seed: int) -> Path:
     return (
         PROJECT_ROOT
         / "outputs"
         / "checkpoints"
-        / f"q_learning_agent_{map_name}_seed_{seed}.json"
+        / f"q_learning_agent_{map_name}_ep_{episodes}_seed_{seed}.json"
     )
 
 
@@ -147,7 +146,11 @@ def load_or_train_q_agent(
     print_every: int = PRINT_EVERY,
 ) -> QLearningAgent:
     # Reuse a saved checkpoint when possible, otherwise train and save a new one.
-    checkpoint_path = get_checkpoint_path(map_name=map_name, seed=seed)
+    checkpoint_path = get_checkpoint_path(
+        map_name=map_name,
+        episodes=num_episodes,
+        seed=seed,
+    )
 
     if checkpoint_path.exists():
         print(
