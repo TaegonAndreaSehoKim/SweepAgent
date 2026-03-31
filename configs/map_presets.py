@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# Shared map presets for benchmarking and visualization.
+# Shared map presets for benchmarking, training, and UI visualization.
 MAP_PRESETS = {
     "default": {
         "grid_map": [
@@ -48,43 +48,32 @@ MAP_PRESETS = {
         ],
         "max_steps": 170,
     },
-    "battery_harder": {
-        "grid_map": [
-            "#########",
-            "#R..D...#",
-            "#.#.#.#.#",
-            "#...D...#",
-            "#.#...#.#",
-            "#...D...#",
-            "#########",
-        ],
-        "max_steps": 80,
-        "battery_capacity": 18,
-    },
+
+    # Small battery-awareness demo map.
     "charging_easy": {
-        "grid_map": [
-            "###########",
-            "#R..D..C..#",
-            "#.###.##..#",
-            "#.........#",
-            "#..##.###.#",
-            "#..D....D.#",
-            "###########",
-        ],
-        "max_steps": 120,
-        "battery_capacity": 10,
-    },
-    "charging_demo": {
         "grid_map": [
             "#########",
             "#R.D.C.D#",
             "#.......#",
+            "#########",
+        ],
+        "max_steps": 80,
+        "battery_capacity": 10,
+    },
+
+    # Small map used for short charging visualization demos.
+    "charging_demo": {
+        "grid_map": [
+            "#########",
+            "#R.D.C..#",
             "#.....D.#",
             "#########",
         ],
-        "max_steps": 60,
-        "battery_capacity": 6,
+        "max_steps": 90,
+        "battery_capacity": 10,
     },
+
+    # Current main charge-required map from the project.
     "charge_required_v2": {
         "grid_map": [
             "###########",
@@ -97,6 +86,71 @@ MAP_PRESETS = {
         ],
         "max_steps": 120,
         "battery_capacity": 10,
+    },
+
+    # New medium-sized maze map:
+    # - multiple dirty clusters
+    # - one charger in the middle corridor
+    # - requires navigating around walls instead of just straight sweeping
+    "charge_maze_medium": {
+        "grid_map": [
+            "#############",
+            "#R..#...D...#",
+            "#.#.#.###.#.#",
+            "#.#...C...#.#",
+            "#.###.#.###.#",
+            "#...D.#...D.#",
+            "#.#.###.#.#.#",
+            "#...#.....#.#",
+            "#############",
+        ],
+        "max_steps": 180,
+        "battery_capacity": 12,
+    },
+
+    # New larger map:
+    # - longer travel distances
+    # - more detours
+    # - central charger that is useful but not always on the shortest path
+    # - multiple distant dirty tiles
+    "charge_maze_large": {
+        "grid_map": [
+            "#################",
+            "#R....#....D....#",
+            "#.###.#.#####.#.#",
+            "#...#.#.....#.#.#",
+            "###.#.###.#.#.#.#",
+            "#...#...C.#...#.#",
+            "#.#####.#.#####.#",
+            "#.....#.#.....#.#",
+            "#.###.#.###.#.#.#",
+            "#D..#.....#...D.#",
+            "#################",
+        ],
+        "max_steps": 260,
+        "battery_capacity": 40,
+    },
+
+    # New multi-charge detour map:
+    # - two chargers
+    # - several dirty tiles in different regions
+    # - encourages future algorithm comparison on charger choice behavior
+    "multi_charge_detour": {
+        "grid_map": [
+            "#################",
+            "#R..D....#....C.#",
+            "#.###.##.#.##.#.#",
+            "#...#....#....#.#",
+            "###.#.######.#.#.",
+            "#...#..D..C..#..#",
+            "#.#####.#######.#",
+            "#.....#.....#...#",
+            "#.###.#.###.#.#.#",
+            "#D....#...D...#.#",
+            "#################",
+        ],
+        "max_steps": 280,
+        "battery_capacity": 40,
     },
 }
 
