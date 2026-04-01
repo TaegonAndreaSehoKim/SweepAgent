@@ -1,7 +1,7 @@
 # SweepAgent
 
 SweepAgent is a reinforcement learning project for a grid-based cleaning robot.
-The agent learns how to clean dirty tiles efficiently while handling walls, limited step budgets, and charge-aware navigation on larger maps.
+The agent learns cleaning policies under walls, dirty tiles, step limits, and battery-constrained charge-aware navigation.
 
 ## Current Project Status
 
@@ -10,23 +10,25 @@ SweepAgent now includes:
 - a custom `GridCleanEnv` environment with:
   - walls
   - dirty tiles
+  - one robot start position
+  - step limits
   - optional battery constraints
-  - optional charging stations
+  - optional charger tiles
 - a random baseline agent
 - a tabular Q-learning agent
-- reusable training and checkpoint loading utilities
-- map presets ranging from small rooms to larger charge-aware maze layouts
-- comparison scripts for random vs learned policy evaluation
-- GIF and policy rendering utilities
+- JSON checkpoint save/load support
+- shared experiment utilities for map construction and checkpoint reuse
+- multiple benchmark maps
+- larger charge-aware maze maps
+- curriculum training support
 - a pygame-based training and playback UI
-- episode-aware checkpoint naming
-- map-specific hyperparameter tuning for harder charge-aware maps
 
-Recent development focused on making the project more demo-friendly and more stable on larger maps.
+The project has moved beyond the original small-room example and now supports harder charge-aware maps, map-specific checkpoint reuse, UI-driven experiments, and curriculum-based training flows.
 
-## Key Features
+## Main Features
 
-### 1. Custom Environment
+### 1. Environment
+
 The environment supports:
 
 - wall collisions
@@ -34,105 +36,128 @@ The environment supports:
 - revisit penalties
 - step limits
 - optional battery capacity
-- optional charger tiles
-- charge-aware termination and reward handling
+- optional charging stations
+
+The base map symbols are:
+
+- `#` wall
+- `.` floor
+- `D` dirty tile
+- `R` robot start
+- `C` charging station
 
 ### 2. Agents
+
 Implemented agents:
 
 - `RandomAgent`
 - `QLearningAgent`
 
-The learned policy can be trained once and reused through JSON checkpoints.
+The learned policy is stored as a JSON checkpoint and can be reused across training, evaluation, comparison, GIF rendering, and UI playback.
 
 ### 3. Shared Experiment Utilities
-The project uses shared utilities so that training, comparison, rendering, and UI playback all follow the same rules for:
+
+Common utilities are centralized so multiple scripts follow the same rules for:
 
 - map preset loading
-- reward configuration
-- checkpoint naming
+- reward settings
+- checkpoint path generation
 - checkpoint reuse
 
-### 4. Visualization and Demo Tools
-SweepAgent includes:
+### 4. Training UI
 
-- learned policy GIF rendering
-- side-by-side comparison GIF rendering
-- benchmark plotting
-- an interactive pygame training app
-
-The pygame UI now supports:
+The pygame UI supports:
 
 - map selection
 - algorithm selection
 - result view selection
-- episode count selection
+- episode selection
 - train seed selection
 - playback seed selection
-- Q-learning hyperparameter selection from the menu
+- Q-learning hyperparameter selection
+- curriculum-learning selection from the algorithm menu
 
-### 5. Charge-Aware Training
-The project now includes charge-aware maps such as:
+Recent UI changes:
 
+- dropdown layout fixes so controls fit within the window
+- safer dropdown click handling to avoid lower controls stealing clicks
+- removal of the mini rollout preview from the training screen to reduce unused space
+- cleaner training layout with metrics, logs, graphs, and cancel action only
+
+### 5. Curriculum Learning
+
+The UI now supports a curriculum-learning path through the algorithm selector.
+
+Current curriculum behavior:
+
+- stage 1 uses `charge_maze_medium`
+- stage 2 uses the map selected in the UI
+
+This allows the same curriculum entry point to be reused for different harder stage-2 maps rather than being locked to one fixed final map.
+
+## Maps
+
+SweepAgent now includes:
+
+### Earlier maps
+
+- `default`
+- `harder`
+- `wide_room`
+- `corridor`
 - `charge_required_v2`
 - `charge_maze_medium`
 - `charge_maze_large`
 - `multi_charge_detour`
 
-These maps make the environment meaningfully harder than the original small-room tasks.
+### New complex charge-aware maps
 
-## Recent Improvements
+- `complex_charge_labyrinth`
+- `complex_charge_bastion`
+- `complex_charge_switchback`
 
-### Charge-aware environment and map expansion
-The project moved beyond simple room layouts and added larger maps that require longer-horizon planning under battery constraints.
+These newer maps are intended for longer-horizon navigation and harder battery-aware planning.
 
-### UI refactor
-The training app was split into more maintainable modules and updated so training control and playback control are easier to extend.
+## Battery Capacity Design
 
-### Episode-aware checkpoints
-Checkpoint file names now include the episode count so that different training runs do not silently reuse the wrong model.
+Battery capacity is now set using the same rule across maps.
 
-Example format:
+For each preset:
+
+- compute the minimum solvable battery requirement using shortest-path search over the important locations
+- add a margin of `+5`
+
+This makes battery sizing more systematic than manual tuning and keeps the maps challenging while still solvable.
+
+## Checkpoints
+
+Checkpoint naming is episode-aware.
+
+Format:
 
 `q_learning_agent_<map_name>_ep_<episodes>_seed_<seed>.json`
 
-### Map-specific hyperparameter tuning
-A single fixed hyperparameter set was not reliable across all maps.
-The current direction is to use easier settings for smaller maps and slower exploration decay for larger charge-aware maps.
+Examples from the recent work include:
 
-A strong combination for the larger charge-aware map was:
+- `q_learning_agent_charge_maze_medium_ep_50000_seed_42.json`
+- `q_learning_agent_complex_charge_labyrinth_ep_50000_seed_42.json`
+- `q_learning_agent_complex_charge_bastion_ep_50000_seed_42.json`
+- `q_learning_agent_complex_charge_switchback_ep_50000_seed_42.json`
 
-- `learning_rate = 0.05`
-- `discount_factor = 0.99`
-- `epsilon_decay = 0.999`
-- `epsilon_min = 0.10`
+## Recent Training Notes
 
-This combination gave more stable learning behavior than the earlier default settings.
+Observed from the latest uploaded checkpoints:
 
-## Suggested Hyperparameter Presets
+- `charge_maze_medium` at 50k episodes appears substantially more stable than the new complex maps
+- the three new complex maps still look harder and likely need additional curriculum tuning, more training, or further reward/structure refinement
 
-### Small / medium charge-aware maps
-Recommended starting point:
-
-- `learning_rate = 0.05`
-- `discount_factor = 0.99`
-- `epsilon_decay = 0.997`
-- `epsilon_min = 0.05`
-
-### Large charge-aware maps
-Recommended starting point:
-
-- `learning_rate = 0.05`
-- `discount_factor = 0.99`
-- `epsilon_decay = 0.999`
-- `epsilon_min = 0.10`
+That matches the current project direction: the curriculum setup is in place, but the hardest maps are still active tuning targets.
 
 ## Project Structure
 
 ```text
 SweepAgent/
 ├── README.md
-├── requirements.txt
 ├── agents/
 │   ├── q_learning_agent.py
 │   └── random_agent.py
@@ -143,9 +168,11 @@ SweepAgent/
 ├── scripts/
 │   ├── benchmark_maps.py
 │   ├── compare_agents.py
+│   ├── evaluate_agents.py
 │   ├── render_comparison_gif.py
 │   ├── render_policy_gif.py
 │   ├── run_training_app.py
+│   ├── train_q_curriculum.py
 │   └── train_q_learning.py
 ├── ui/
 │   ├── training_app_core.py
@@ -162,50 +189,48 @@ SweepAgent/
 │   └── plots/
 └── docs/
     └── devlog/
-        └── week1.md
+        ├── week1.md
+        └── week2.md
 ```
 
 ## How to Run
 
-### 1. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Train a Q-learning agent
+### Train Q-learning on a selected map
 
 ```bash
 python scripts/train_q_learning.py --map-name charge_required_v2 --episodes 5000 --seed 42
 ```
 
-### 3. Compare random vs learned policy
+### Run comparison
 
 ```bash
-python scripts/compare_agents.py --map-name charge_required_v2 --episodes 5000 --seed 42 --eval-episodes 100
+python scripts/compare_agents.py --map-name charge_required_v2 --episodes 5000 --seed 42 --eval-episodes 50
 ```
 
-### 4. Launch the training UI
+### Launch the training UI
 
 ```bash
 python scripts/run_training_app.py
 ```
 
-## Current Development Notes
+### Curriculum training
 
-At this stage, the project is no longer just a single-map RL demo.
-It now supports:
+```bash
+python scripts/train_q_curriculum.py --stage1-map charge_maze_medium --stage2-map complex_charge_labyrinth --seed 42
+```
 
-- multi-map experimentation
-- charge-aware planning
-- reusable checkpoints
-- a modular training UI
-- harder large-map tuning workflows
+## Current Direction
 
-The next major step is planned to be curriculum learning, but that work has not been started yet.
+The current focus is no longer just “can Q-learning solve a small room.”
+It is now:
 
-## Devlog
+- battery-aware planning on larger maps
+- curriculum learning for harder charge-aware layouts
+- UI-driven experimentation
+- systematic map design and checkpoint reuse
 
-Weekly development notes are recorded in:
+The next likely improvement areas are:
 
-`docs/devlog/week1.md`
+- stronger curriculum schedules for the hardest maps
+- more stable training on the three newest complex maps
+- better evaluation summaries in docs and plots
