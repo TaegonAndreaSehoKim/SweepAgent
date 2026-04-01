@@ -79,7 +79,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def ui_button(x: int, y: int, w: int, h: int, label: str, on_click, primary: bool = False) -> Button:
-    """Small helper to create Button objects with pygame.Rect."""
     return Button(
         rect=pygame.Rect(x, y, w, h),
         label=label,
@@ -198,11 +197,16 @@ def main() -> None:
 
         menu_buttons = [
             ui_button(
-                x=430,
+                x=390,
                 y=MENU_HEIGHT - 80,
-                w=300,
+                w=260,
                 h=54,
-                label="Start Training" if menu.algorithm_name != "random_baseline" else "Start Preview",
+                label=(
+                    "Start Curriculum"
+                    if menu.algorithm_name == "curriculum_q_learning"
+                    else "Start Training" if menu.algorithm_name != "random_baseline"
+                    else "Start Preview"
+                ),
                 on_click=lambda: None,
                 primary=True,
             )
@@ -304,44 +308,8 @@ def main() -> None:
             if mouse_clicked:
                 handled = False
 
-                for button in menu_buttons:
-                    if button.rect.collidepoint(mouse_pos):
-                        app_state = start_selected_flow(
-                            menu=menu,
-                            training=training,
-                            preview=preview,
-                            single_playback=single_playback,
-                            compare_playback=compare_playback,
-                            preview_policy_cls=PreviewPolicy,
-                            train_seed=menu.train_seed,
-                            random_seed=menu.playback_seed,
-                        )
-                        handled = True
-                        break
-
-                if not handled:
-                    dropdown_boxes = {
-                        "map": dropdown_ui["map_rect"],
-                        "model": dropdown_ui["model_rect"],
-                        "result_view": dropdown_ui["result_rect"],
-                        "episodes": dropdown_ui["episodes_rect"],
-                        "train_seed": dropdown_ui["train_seed_rect"],
-                        "playback_seed": dropdown_ui["playback_seed_rect"],
-                        "learning_rate": dropdown_ui["learning_rate_rect"],
-                        "discount_factor": dropdown_ui["discount_factor_rect"],
-                        "epsilon_start": dropdown_ui["epsilon_start_rect"],
-                        "epsilon_decay": dropdown_ui["epsilon_decay_rect"],
-                        "epsilon_min": dropdown_ui["epsilon_min_rect"],
-                        "delay": dropdown_ui["delay_rect"],
-                    }
-
-                    for key, rect in dropdown_boxes.items():
-                        if isinstance(rect, pygame.Rect) and rect.collidepoint(mouse_pos):
-                            menu.open_dropdown = None if menu.open_dropdown == key else key
-                            handled = True
-                            break
-
-                if not handled and menu.open_dropdown is not None:
+                # 1) Open dropdown option clicks must be handled first.
+                if menu.open_dropdown is not None:
                     option_key = {
                         "map": "map_options",
                         "model": "model_options",
@@ -358,11 +326,13 @@ def main() -> None:
                     }[menu.open_dropdown]
 
                     option_rects = dropdown_ui[option_key]
+                    clicked_option = False
+
                     if isinstance(option_rects, list):
-                        clicked_option = False
                         for idx, rect in enumerate(option_rects):
                             if rect.collidepoint(mouse_pos):
                                 clicked_option = True
+
                                 if menu.open_dropdown == "map":
                                     menu.map_name = list(MAP_PRESETS.keys())[idx]
                                     rebuild_training_preview_env(
@@ -405,8 +375,50 @@ def main() -> None:
                                 handled = True
                                 break
 
-                        if not clicked_option:
-                            menu.open_dropdown = None
+                    # Outside click closes the open dropdown before any lower header can steal the click.
+                    if not handled and not clicked_option:
+                        menu.open_dropdown = None
+                        handled = True
+
+                # 2) Then handle start button clicks.
+                if not handled:
+                    for button in menu_buttons:
+                        if button.rect.collidepoint(mouse_pos):
+                            app_state = start_selected_flow(
+                                menu=menu,
+                                training=training,
+                                preview=preview,
+                                single_playback=single_playback,
+                                compare_playback=compare_playback,
+                                preview_policy_cls=PreviewPolicy,
+                                train_seed=menu.train_seed,
+                                random_seed=menu.playback_seed,
+                            )
+                            handled = True
+                            break
+
+                # 3) Finally handle dropdown header toggles.
+                if not handled:
+                    dropdown_boxes = {
+                        "map": dropdown_ui["map_rect"],
+                        "model": dropdown_ui["model_rect"],
+                        "result_view": dropdown_ui["result_rect"],
+                        "episodes": dropdown_ui["episodes_rect"],
+                        "train_seed": dropdown_ui["train_seed_rect"],
+                        "playback_seed": dropdown_ui["playback_seed_rect"],
+                        "learning_rate": dropdown_ui["learning_rate_rect"],
+                        "discount_factor": dropdown_ui["discount_factor_rect"],
+                        "epsilon_start": dropdown_ui["epsilon_start_rect"],
+                        "epsilon_decay": dropdown_ui["epsilon_decay_rect"],
+                        "epsilon_min": dropdown_ui["epsilon_min_rect"],
+                        "delay": dropdown_ui["delay_rect"],
+                    }
+
+                    for key, rect in dropdown_boxes.items():
+                        if isinstance(rect, pygame.Rect) and rect.collidepoint(mouse_pos):
+                            menu.open_dropdown = None if menu.open_dropdown == key else key
+                            handled = True
+                            break
 
         elif app_state == "training":
             if screen.get_width() != MENU_WIDTH or screen.get_height() != training_height:

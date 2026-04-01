@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 MODEL_OPTIONS = [
     "q_learning",
+    "curriculum_q_learning",
     "random_baseline",
 ]
 
@@ -26,14 +27,13 @@ RESULT_VIEW_OPTIONS = [
 ]
 
 EPISODE_OPTIONS = [1000, 3000, 5000, 10000, 20000, 50000]
+STEP_DELAY_OPTIONS = [0.1, 0.2, 0.3, 0.5, 0.8]
 TRAIN_SEED_OPTIONS = [11, 22, 33, 42, 43, 99]
 PLAYBACK_SEED_OPTIONS = [11, 22, 33, 42, 43, 99]
 
-STEP_DELAY_OPTIONS = [0.1, 0.2, 0.3, 0.5, 0.8]
-
 LEARNING_RATE_OPTIONS = [0.03, 0.05, 0.10, 0.20]
 DISCOUNT_FACTOR_OPTIONS = [0.95, 0.99, 0.995]
-EPSILON_START_OPTIONS = [0.80, 1.00]
+EPSILON_START_OPTIONS = [0.30, 0.80, 1.00]
 EPSILON_DECAY_OPTIONS = [0.995, 0.997, 0.999]
 EPSILON_MIN_OPTIONS = [0.03, 0.05, 0.10]
 
@@ -41,8 +41,8 @@ TRAINING_LINE_PATTERN = re.compile(
     r"Episode\s+(\d+)/(\d+)\s+\|\s+avg_reward=([-\d.]+)\s+\|\s+avg_cleaned_ratio=([\d.]+)%\s+\|\s+success_rate=([\d.]+)%\s+\|\s+epsilon=([\d.]+)"
 )
 
-MENU_WIDTH = 1160
-MENU_HEIGHT = 980
+MENU_WIDTH = 1040
+MENU_HEIGHT = 820
 
 PLAYBACK_TITLE_AREA_HEIGHT = 72
 PLAYBACK_CONTROL_BAR_HEIGHT = 72
@@ -51,7 +51,7 @@ PLAYBACK_TOP_RESERVED = PLAYBACK_TITLE_AREA_HEIGHT + PLAYBACK_CONTROL_BAR_HEIGHT
 TRAINING_METRICS_HEIGHT = 180
 TRAINING_LOG_HEIGHT = 220
 TRAINING_GRAPH_HEIGHT = 180
-TRAINING_PREVIEW_HEIGHT = 360
+TRAINING_PREVIEW_HEIGHT = 0
 
 TRAINING_TOP_Y = 96
 TRAINING_GAP = 18
@@ -81,13 +81,29 @@ EPSILON_FILL = (111, 66, 193)
 SCROLL_TRACK = (236, 240, 244)
 SCROLL_THUMB = (173, 181, 189)
 
+CURRICULUM_STAGE1_MAP = "charge_maze_medium"
+CURRICULUM_STAGE1_MIN_EPISODES = 20000
+CURRICULUM_STAGE2_MIN_EPISODES = 50000
+
 ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
     "q_learning": {
         "learning_rate": 0.10,
-        "discount_factor": 0.99,
+        "discount_factor": 0.95,
         "epsilon_start": 1.00,
         "epsilon_decay": 0.995,
         "epsilon_min": 0.05,
+    },
+    "curriculum_q_learning": {
+        "stage1_learning_rate": 0.05,
+        "stage1_discount_factor": 0.99,
+        "stage1_epsilon_start": 1.00,
+        "stage1_epsilon_decay": 0.997,
+        "stage1_epsilon_min": 0.05,
+        "stage2_learning_rate": 0.05,
+        "stage2_discount_factor": 0.99,
+        "stage2_epsilon_start": 0.30,
+        "stage2_epsilon_decay": 0.999,
+        "stage2_epsilon_min": 0.10,
     },
     "random_baseline": {},
 }
@@ -95,7 +111,6 @@ ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
 
 @dataclass
 class Button:
-    """Simple clickable button model."""
     rect: object
     label: str
     on_click: Callable[[], None]
@@ -104,11 +119,6 @@ class Button:
 
 
 class TrainingRunner:
-    """
-    Run the external training script in a subprocess and stream stdout lines
-    back into the UI through a queue.
-    """
-
     def __init__(self) -> None:
         self.process: subprocess.Popen[str] | None = None
         self.output_queue: queue.Queue[str] = queue.Queue()
@@ -155,11 +165,6 @@ class TrainingRunner:
 
 
 class PreviewPolicy:
-    """
-    Load the latest checkpoint file and provide greedy actions for the
-    training mini-preview.
-    """
-
     def __init__(self, checkpoint_path: Path) -> None:
         self.checkpoint_path = checkpoint_path
         self.q_table: dict[str, list[float]] = {}
@@ -219,13 +224,69 @@ class PreviewPolicy:
 
 
 def get_default_algorithm_params(algorithm_name: str) -> dict[str, float]:
-    """Return a copy of default hyperparameters for the selected algorithm."""
     return copy.deepcopy(ALGORITHM_DEFAULT_PARAMS.get(algorithm_name, {}))
 
 
 def is_trainable_algorithm(algorithm_name: str) -> bool:
-    """Return whether this selection launches a training subprocess."""
     return algorithm_name != "random_baseline"
+
+
+def get_preview_map_name(algorithm_name: str, selected_map_name: str) -> str:
+    if algorithm_name == "curriculum_q_learning":
+        return selected_map_name
+    return selected_map_name
+
+
+def get_playback_target_map_name(algorithm_name: str, selected_map_name: str) -> str:
+    if algorithm_name == "curriculum_q_learning":
+        return selected_map_name
+    return selected_map_name
+
+
+def get_playback_target_episodes(algorithm_name: str, selected_episodes: int) -> int:
+    if algorithm_name == "curriculum_q_learning":
+        return max(CURRICULUM_STAGE2_MIN_EPISODES, selected_episodes)
+    return selected_episodes
+
+
+def get_preview_checkpoint_path(
+    algorithm_name: str,
+    selected_map_name: str,
+    selected_episodes: int,
+    seed: int,
+) -> Path:
+    preview_map_name = get_preview_map_name(algorithm_name, selected_map_name)
+    preview_episodes = get_playback_target_episodes(algorithm_name, selected_episodes)
+    return get_checkpoint_path(preview_map_name, preview_episodes, seed)
+
+
+def get_display_hyperparams(algorithm_name: str, algorithm_params: dict[str, float]) -> dict[str, float]:
+    if algorithm_name == "curriculum_q_learning":
+        return {
+            "learning_rate": algorithm_params.get("stage2_learning_rate", 0.05),
+            "discount_factor": algorithm_params.get("stage2_discount_factor", 0.99),
+            "epsilon_start": algorithm_params.get("stage2_epsilon_start", 0.30),
+            "epsilon_decay": algorithm_params.get("stage2_epsilon_decay", 0.999),
+            "epsilon_min": algorithm_params.get("stage2_epsilon_min", 0.10),
+        }
+
+    return {
+        "learning_rate": algorithm_params.get("learning_rate", 0.0),
+        "discount_factor": algorithm_params.get("discount_factor", 0.0),
+        "epsilon_start": algorithm_params.get("epsilon_start", 0.0),
+        "epsilon_decay": algorithm_params.get("epsilon_decay", 0.0),
+        "epsilon_min": algorithm_params.get("epsilon_min", 0.0),
+    }
+
+
+def update_menu_hyperparam(menu, param_name: str, value: float) -> None:
+    if menu.algorithm_name == "curriculum_q_learning":
+        stage2_key = f"stage2_{param_name}"
+        if stage2_key in menu.algorithm_params:
+            menu.algorithm_params[stage2_key] = value
+        return
+
+    menu.algorithm_params[param_name] = value
 
 
 def build_training_command(
@@ -264,16 +325,56 @@ def build_training_command(
 
         return command
 
+    if algorithm_name == "curriculum_q_learning":
+        command = [
+            sys.executable,
+            "scripts/train_q_curriculum.py",
+            "--stage1-map",
+            CURRICULUM_STAGE1_MAP,
+            "--stage2-map",
+            map_name,
+            "--stage1-episodes",
+            str(max(CURRICULUM_STAGE1_MIN_EPISODES, episodes)),
+            "--stage2-episodes",
+            str(max(CURRICULUM_STAGE2_MIN_EPISODES, episodes)),
+            "--seed",
+            str(seed),
+            "--print-every",
+            "100",
+        ]
+
+        if "stage1_learning_rate" in algorithm_params:
+            command.extend(["--stage1-learning-rate", str(algorithm_params["stage1_learning_rate"])])
+        if "stage1_discount_factor" in algorithm_params:
+            command.extend(["--stage1-discount-factor", str(algorithm_params["stage1_discount_factor"])])
+        if "stage1_epsilon_start" in algorithm_params:
+            command.extend(["--stage1-epsilon-start", str(algorithm_params["stage1_epsilon_start"])])
+        if "stage1_epsilon_decay" in algorithm_params:
+            command.extend(["--stage1-epsilon-decay", str(algorithm_params["stage1_epsilon_decay"])])
+        if "stage1_epsilon_min" in algorithm_params:
+            command.extend(["--stage1-epsilon-min", str(algorithm_params["stage1_epsilon_min"])])
+
+        if "stage2_learning_rate" in algorithm_params:
+            command.extend(["--stage2-learning-rate", str(algorithm_params["stage2_learning_rate"])])
+        if "stage2_discount_factor" in algorithm_params:
+            command.extend(["--stage2-discount-factor", str(algorithm_params["stage2_discount_factor"])])
+        if "stage2_epsilon_start" in algorithm_params:
+            command.extend(["--stage2-epsilon-start", str(algorithm_params["stage2_epsilon_start"])])
+        if "stage2_epsilon_decay" in algorithm_params:
+            command.extend(["--stage2-epsilon-decay", str(algorithm_params["stage2_epsilon_decay"])])
+        if "stage2_epsilon_min" in algorithm_params:
+            command.extend(["--stage2-epsilon-min", str(algorithm_params["stage2_epsilon_min"])])
+
+        return command
+
     raise ValueError(f"Unsupported training algorithm: {algorithm_name}")
 
 
 def clamp_step_delay(value: float, min_step_delay: float, max_step_delay: float) -> float:
-    """Clamp playback delay to the allowed UI range."""
     return max(min_step_delay, min(max_step_delay, value))
 
 
 def compute_training_window_height() -> int:
-    """Compute the taller window height used only during training."""
     return (
         TRAINING_TOP_Y
         + TRAINING_METRICS_HEIGHT
@@ -282,8 +383,15 @@ def compute_training_window_height() -> int:
         + TRAINING_GAP
         + TRAINING_GRAPH_HEIGHT
         + TRAINING_GAP
-        + TRAINING_PREVIEW_HEIGHT
-        + TRAINING_GAP
         + TRAINING_BOTTOM_ACTION_HEIGHT
         + TRAINING_BOTTOM_MARGIN
+    )
+
+
+def get_checkpoint_path(map_name: str, episodes: int, seed: int) -> Path:
+    return (
+        PROJECT_ROOT
+        / "outputs"
+        / "checkpoints"
+        / f"q_learning_agent_{map_name}_ep_{episodes}_seed_{seed}.json"
     )
