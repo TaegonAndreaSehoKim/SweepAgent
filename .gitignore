@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+
+outputs/*
+!outputs/checkpoints/
+!outputs/gifs/
+!outputs/logs/
+!outputs/plots/
+outputs/checkpoints/*
+outputs/gifs/*
+outputs/logs/*
+outputs/plots/*
+!outputs/checkpoints/.gitkeep
+!outputs/gifs/.gitkeep
+!outputs/logs/.gitkeep
+!outputs/plots/.gitkeep
