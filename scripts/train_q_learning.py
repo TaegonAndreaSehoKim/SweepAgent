@@ -52,7 +52,6 @@ def parse_args() -> argparse.Namespace:
         help="Print one compact progress line every N episodes.",
     )
 
-    # Hyperparameters exposed to the UI.
     parser.add_argument(
         "--learning-rate",
         type=float,
@@ -83,6 +82,24 @@ def parse_args() -> argparse.Namespace:
         default=0.05,
         help="Minimum epsilon floor.",
     )
+
+    parser.add_argument(
+        "--init-checkpoint",
+        type=str,
+        default="",
+        help="Optional checkpoint path to resume/initialize training from.",
+    )
+    parser.add_argument(
+        "--reset-epsilon",
+        action="store_true",
+        help="Reset epsilon to --epsilon-start after loading a checkpoint.",
+    )
+    parser.add_argument(
+        "--override-loaded-hparams",
+        action="store_true",
+        help="Force loaded agent hyperparameters to match CLI arguments.",
+    )
+
     return parser.parse_args()
 
 
@@ -133,39 +150,15 @@ def save_line_plot(
     return output_path
 
 
-def serialize_q_table(q_table: Any) -> dict[str, list[float]]:
-    """
-    Convert an in-memory Q-table into a JSON-safe dictionary.
-
-    This assumes q_table behaves like:
-        {state_tuple: [q0, q1, q2, q3], ...}
-    """
-    serialized: dict[str, list[float]] = {}
-    for state, q_values in q_table.items():
-        state_key = str(tuple(state))
-        serialized[state_key] = [float(x) for x in q_values]
-    return serialized
-
-
 def maybe_get_q_table(agent: QLearningAgent) -> dict[Any, Any]:
-    """
-    Retrieve the internal q_table from the agent.
-
-    This project has used JSON checkpoint serialization already, so a q_table-like
-    structure should exist. If your agent uses a different attribute name, adjust here.
-    """
+    """Retrieve the internal q_table from the agent."""
     if hasattr(agent, "q_table"):
         return getattr(agent, "q_table")
     raise AttributeError("QLearningAgent does not expose a 'q_table' attribute.")
 
 
-def build_agent(args: argparse.Namespace) -> QLearningAgent:
-    """
-    Create the Q-learning agent with UI-configurable hyperparameters.
-
-    If your QLearningAgent constructor uses different keyword names,
-    update only this function.
-    """
+def build_fresh_agent(args: argparse.Namespace) -> QLearningAgent:
+    """Create a fresh Q-learning agent from CLI arguments."""
     return QLearningAgent(
         learning_rate=args.learning_rate,
         discount_factor=args.discount_factor,
@@ -174,6 +167,51 @@ def build_agent(args: argparse.Namespace) -> QLearningAgent:
         epsilon_min=args.epsilon_min,
         seed=args.seed,
     )
+
+
+def apply_hparam_overrides(agent: QLearningAgent, args: argparse.Namespace, reset_epsilon: bool) -> None:
+    """Optionally override loaded agent hyperparameters with CLI values."""
+    if hasattr(agent, "learning_rate"):
+        agent.learning_rate = args.learning_rate
+    if hasattr(agent, "discount_factor"):
+        agent.discount_factor = args.discount_factor
+    if hasattr(agent, "epsilon_decay"):
+        agent.epsilon_decay = args.epsilon_decay
+    if hasattr(agent, "epsilon_min"):
+        agent.epsilon_min = args.epsilon_min
+    if hasattr(agent, "seed"):
+        agent.seed = args.seed
+    if reset_epsilon and hasattr(agent, "epsilon"):
+        agent.epsilon = args.epsilon_start
+
+
+def build_agent(args: argparse.Namespace) -> QLearningAgent:
+    """
+    Build an agent for training.
+
+    - Fresh agent if no init checkpoint is provided
+    - Loaded agent if init checkpoint is provided
+    """
+    if args.init_checkpoint:
+        checkpoint_path = Path(args.init_checkpoint)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Initial checkpoint not found: {checkpoint_path}")
+
+        if not hasattr(QLearningAgent, "load") or not callable(getattr(QLearningAgent, "load")):
+            raise AttributeError("QLearningAgent must provide a load() classmethod for resume training.")
+
+        agent = QLearningAgent.load(checkpoint_path)
+
+        if args.override_loaded_hparams or args.reset_epsilon:
+            apply_hparam_overrides(
+                agent=agent,
+                args=args,
+                reset_epsilon=args.reset_epsilon,
+            )
+
+        return agent
+
+    return build_fresh_agent(args)
 
 
 def train_one_episode(env, agent: QLearningAgent) -> dict[str, float]:
@@ -187,7 +225,6 @@ def train_one_episode(env, agent: QLearningAgent) -> dict[str, float]:
         action = agent.select_action(state, training=True)
         next_state, reward, done, info = env.step(action)
 
-        # Standard one-step tabular Q-learning update.
         agent.update(state, action, reward, next_state, done)
 
         state = next_state
@@ -228,9 +265,7 @@ def save_checkpoint(
     args: argparse.Namespace,
     agent: QLearningAgent,
 ) -> Path:
-    """
-    Save checkpoint in the same schema expected by QLearningAgent.load().
-    """
+    """Save checkpoint in the same schema expected by QLearningAgent.load()."""
     if hasattr(agent, "save") and callable(getattr(agent, "save")):
         agent.save(checkpoint_path)
         return checkpoint_path
@@ -242,12 +277,15 @@ def save_checkpoint(
             "map_name": args.map_name,
             "episodes": args.episodes,
             "seed": args.seed,
+            "init_checkpoint": args.init_checkpoint,
             "hyperparameters": {
                 "learning_rate": args.learning_rate,
                 "discount_factor": args.discount_factor,
                 "epsilon_start": args.epsilon_start,
                 "epsilon_decay": args.epsilon_decay,
                 "epsilon_min": args.epsilon_min,
+                "reset_epsilon": args.reset_epsilon,
+                "override_loaded_hparams": args.override_loaded_hparams,
             },
         }
 
@@ -265,7 +303,11 @@ def main() -> None:
     agent = build_agent(args)
 
     _, plot_dir = ensure_output_dirs()
-    checkpoint_path = get_checkpoint_path(map_name=args.map_name, episodes=args.episodes, seed=args.seed)
+    checkpoint_path = get_checkpoint_path(
+        map_name=args.map_name,
+        episodes=args.episodes,
+        seed=args.seed,
+    )
 
     rewards: list[float] = []
     cleaned_ratios: list[float] = []
@@ -280,6 +322,9 @@ def main() -> None:
     print(f"epsilon_start: {args.epsilon_start}")
     print(f"epsilon_decay: {args.epsilon_decay}")
     print(f"epsilon_min: {args.epsilon_min}")
+    print(f"init_checkpoint: {args.init_checkpoint if args.init_checkpoint else 'none'}")
+    print(f"reset_epsilon: {args.reset_epsilon}")
+    print(f"override_loaded_hparams: {args.override_loaded_hparams}")
 
     for episode_idx in range(1, args.episodes + 1):
         episode_result = train_one_episode(env=env, agent=agent)
@@ -336,7 +381,7 @@ def main() -> None:
     q_table = maybe_get_q_table(agent)
     final_window = min(100, len(rewards))
 
-    print("\n=== Training Complete ===")
+    print("\\n=== Training Complete ===")
     print(f"checkpoint: {checkpoint_path}")
     print(f"reward_plot: {reward_plot_path}")
     print(f"cleaned_plot: {cleaned_plot_path}")
