@@ -5,6 +5,8 @@ from typing import Dict, List
 
 from agents.q_learning_agent import QLearningAgent
 from configs.map_presets import (
+    BATTERY_SAFETY_RESERVE_MIN,
+    BATTERY_SAFETY_RESERVE_RATIO,
     DISCOUNT_FACTOR,
     EPSILON_DECAY,
     EPSILON_MIN,
@@ -14,7 +16,9 @@ from configs.map_presets import (
     LOW_BATTERY_RECHARGE_REWARD,
     MAP_PRESETS,
     PENALTY_BATTERY_DEPLETED,
+    PENALTY_ENTER_UNRECOVERABLE_STATE,
     PENALTY_MOVE_AWAY_FROM_CHARGER,
+    PENALTY_MOVE_AWAY_FROM_SAFE_DIRTY,
     PRINT_EVERY,
     REWARD_CLEAN,
     REWARD_FINAL_DIRTY_BONUS,
@@ -22,6 +26,7 @@ from configs.map_presets import (
     REWARD_INVALID,
     REWARD_MOVE,
     REWARD_MOVE_TOWARD_CHARGER,
+    REWARD_MOVE_TOWARD_SAFE_DIRTY,
     REWARD_REVISIT,
     SUCCESSFUL_RECHARGE_COMPLETION_BONUS,
     TRAIN_EPISODES,
@@ -55,9 +60,14 @@ def build_env(map_name: str = "default") -> GridCleanEnv:
         low_battery_ratio=LOW_BATTERY_RATIO,
         reward_move_toward_charger=REWARD_MOVE_TOWARD_CHARGER,
         penalty_move_away_from_charger=PENALTY_MOVE_AWAY_FROM_CHARGER,
+        reward_move_toward_safe_dirty=REWARD_MOVE_TOWARD_SAFE_DIRTY,
+        penalty_move_away_from_safe_dirty=PENALTY_MOVE_AWAY_FROM_SAFE_DIRTY,
+        battery_safety_reserve_min=BATTERY_SAFETY_RESERVE_MIN,
+        battery_safety_reserve_ratio=BATTERY_SAFETY_RESERVE_RATIO,
         low_battery_recharge_reward=LOW_BATTERY_RECHARGE_REWARD,
         reward_final_dirty_bonus=REWARD_FINAL_DIRTY_BONUS,
         penalty_battery_depleted=PENALTY_BATTERY_DEPLETED,
+        penalty_enter_unrecoverable_state=PENALTY_ENTER_UNRECOVERABLE_STATE,
         successful_recharge_completion_bonus=SUCCESSFUL_RECHARGE_COMPLETION_BONUS,
     )
 

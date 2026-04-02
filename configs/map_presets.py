@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import math
 
 # Shared reward settings.
 REWARD_CLEAN = 10
@@ -9,12 +10,17 @@ REWARD_REVISIT = -2
 REWARD_INVALID = -5
 REWARD_FINISH = 50
 LOW_BATTERY_RATIO = 0.3
-REWARD_MOVE_TOWARD_CHARGER = 2
+REWARD_MOVE_TOWARD_CHARGER = 0.5
 PENALTY_MOVE_AWAY_FROM_CHARGER = -2
-LOW_BATTERY_RECHARGE_REWARD = 8
+REWARD_MOVE_TOWARD_SAFE_DIRTY = 0.5
+PENALTY_MOVE_AWAY_FROM_SAFE_DIRTY = -0.5
+LOW_BATTERY_RECHARGE_REWARD = 2
 REWARD_FINAL_DIRTY_BONUS = 30
 PENALTY_BATTERY_DEPLETED = -30
+PENALTY_ENTER_UNRECOVERABLE_STATE = -12
 SUCCESSFUL_RECHARGE_COMPLETION_BONUS = 10
+BATTERY_SAFETY_RESERVE_MIN = 8
+BATTERY_SAFETY_RESERVE_RATIO = 0.15
 
 # Shared training settings.
 TRAIN_EPISODES = 200000
@@ -25,8 +31,8 @@ PRINT_EVERY = 1000
 LEARNING_RATE = 0.05
 DISCOUNT_FACTOR = 0.99
 EPSILON_START = 1.0
-EPSILON_DECAY = 0.99995
-EPSILON_MIN = 0.15
+EPSILON_DECAY = 0.99999
+EPSILON_MIN = 0.20
 
 
 def _find_symbol_positions(grid_map: list[str], symbol: str) -> list[tuple[int, int]]:
@@ -187,12 +193,29 @@ def _min_required_battery_via_state_search(grid_map: list[str]) -> int | None:
     return answer
 
 
-def _battery_capacity_with_margin(grid_map: list[str], margin: int = 5) -> int | None:
-    """Use the minimum required solvable battery and add a small design margin."""
+def _battery_capacity_with_margin(
+    grid_map: list[str],
+    min_margin: int = 5,
+    margin_ratio: float = 0.25,
+    margin_round_unit: int = 10,
+) -> int | None:
+    """
+    Use the minimum required solvable battery and add a scaled slack margin.
+
+    The slack is:
+    - at least ``min_margin``
+    - otherwise ``minimum_capacity * margin_ratio``
+    - then rounded up to the next ``margin_round_unit``
+    """
     minimum_capacity = _min_required_battery_via_state_search(grid_map)
     if minimum_capacity is None:
         return None
-    return minimum_capacity + margin
+
+    raw_margin = max(min_margin, math.ceil(minimum_capacity * margin_ratio))
+    rounded_margin = (
+        ((raw_margin + margin_round_unit - 1) // margin_round_unit) * margin_round_unit
+    )
+    return minimum_capacity + rounded_margin
 
 
 def _recommended_max_steps(grid_map: list[str], multiplier: int = 3) -> int:
@@ -440,6 +463,7 @@ MAP_PRESETS = {
                 "#########################",
             ]
         ),
+        "battery_capacity_override": 100,
     },
     "complex_charge_switchback": {
         "grid_map": [
@@ -478,9 +502,17 @@ MAP_PRESETS = {
                 "#######################",
             ]
         ),
+        "battery_margin_ratio": 0.50,
     },
 }
 
 
 for preset in MAP_PRESETS.values():
-    preset["battery_capacity"] = _battery_capacity_with_margin(preset["grid_map"], margin=5)
+    preset["battery_capacity"] = preset.get("battery_capacity_override")
+    if preset["battery_capacity"] is None:
+        preset["battery_capacity"] = _battery_capacity_with_margin(
+            preset["grid_map"],
+            min_margin=preset.get("battery_min_margin", 5),
+            margin_ratio=preset.get("battery_margin_ratio", 0.25),
+            margin_round_unit=preset.get("battery_margin_round_unit", 10),
+        )
