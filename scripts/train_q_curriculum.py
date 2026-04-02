@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--print-every",
         type=int,
-        default=100,
+        default=1000,
         help="Print one compact progress line every N episodes.",
     )
 
@@ -90,18 +90,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stage2-epsilon-start",
         type=float,
-        default=0.30,
+        default=1.00,
         help="Reset epsilon for the harder stage after loading the stage 1 checkpoint.",
     )
     parser.add_argument(
         "--stage2-epsilon-decay",
         type=float,
-        default=0.999,
+        default=0.99995,
     )
     parser.add_argument(
         "--stage2-epsilon-min",
         type=float,
-        default=0.10,
+        default=0.15,
     )
 
     return parser.parse_args()

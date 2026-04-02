@@ -5,7 +5,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from ui.training_app_core import PreviewPolicy, TrainingRunner, get_default_algorithm_params
+from ui.training_app_core import (
+    PreviewPolicy,
+    TrainingRunner,
+    get_default_algorithm_params,
+)
 
 
 @dataclass
@@ -14,12 +18,14 @@ class MenuSelection:
     map_name: str
     algorithm_name: str = "q_learning"
     result_view: str = "single_playback"
-    episodes: int = 5000
+    episodes: int = 200000
     step_delay: float = 0.5
     train_seed: int = 42
     playback_seed: int = 42
     algorithm_params: dict[str, float] = field(default_factory=lambda: get_default_algorithm_params("q_learning"))
     open_dropdown: str | None = None
+    active_input: str | None = None
+    input_values: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

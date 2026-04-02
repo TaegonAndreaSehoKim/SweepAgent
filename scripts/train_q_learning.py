@@ -19,6 +19,15 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from agents.q_learning_agent import QLearningAgent
+from configs.map_presets import (
+    DISCOUNT_FACTOR,
+    EPSILON_DECAY,
+    EPSILON_MIN,
+    EPSILON_START,
+    LEARNING_RATE,
+    PRINT_EVERY,
+    TRAIN_EPISODES,
+)
 from utils.experiment_utils import build_env
 
 
@@ -36,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--episodes",
         type=int,
-        default=1000,
+        default=TRAIN_EPISODES,
         help="Number of training episodes.",
     )
     parser.add_argument(
@@ -48,38 +57,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--print-every",
         type=int,
-        default=100,
+        default=PRINT_EVERY,
         help="Print one compact progress line every N episodes.",
     )
 
     parser.add_argument(
         "--learning-rate",
         type=float,
-        default=0.10,
+        default=LEARNING_RATE,
         help="Q-learning update step size.",
     )
     parser.add_argument(
         "--discount-factor",
         type=float,
-        default=0.95,
+        default=DISCOUNT_FACTOR,
         help="Discount factor (gamma).",
     )
     parser.add_argument(
         "--epsilon-start",
         type=float,
-        default=1.00,
+        default=EPSILON_START,
         help="Initial epsilon for epsilon-greedy exploration.",
     )
     parser.add_argument(
         "--epsilon-decay",
         type=float,
-        default=0.995,
+        default=EPSILON_DECAY,
         help="Multiplicative epsilon decay applied after each episode.",
     )
     parser.add_argument(
         "--epsilon-min",
         type=float,
-        default=0.05,
+        default=EPSILON_MIN,
         help="Minimum epsilon floor.",
     )
 

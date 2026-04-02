@@ -348,6 +348,29 @@ def draw_dropdown_box(
     )
 
 
+def draw_input_box(
+    screen: pygame.Surface,
+    fonts,
+    label: str,
+    value: str,
+    rect: pygame.Rect,
+    is_active: bool,
+) -> None:
+    label_surface = small_font(fonts).render(label, True, TEXT_COLOR)
+    screen.blit(label_surface, (rect.left, rect.top - 24))
+
+    box_bg = BUTTON_ACTIVE_BG if is_active else BUTTON_BG
+    pygame.draw.rect(screen, box_bg, rect, border_radius=8)
+    pygame.draw.rect(screen, PANEL_BORDER_COLOR, rect, width=2, border_radius=8)
+
+    display_value = value if value else ""
+    if is_active:
+        display_value += "|"
+    value_surface = small_font(fonts).render(display_value, True, TEXT_COLOR)
+    value_rect = value_surface.get_rect(midleft=(rect.left + 12, rect.centery))
+    screen.blit(value_surface, value_rect)
+
+
 def draw_dropdown_overlay(
     screen: pygame.Surface,
     fonts,
@@ -427,28 +450,12 @@ def draw_menu(
     map_name: str,
     model_name: str,
     result_view: str,
-    episodes: int,
-    step_delay: float,
-    train_seed: int,
-    playback_seed: int,
-    learning_rate: float,
-    discount_factor: float,
-    epsilon_start: float,
-    epsilon_decay: float,
-    epsilon_min: float,
+    input_values: dict[str, str],
     open_dropdown: str | None,
+    active_input: str | None,
     buttons: list,
     map_options: list[str],
     model_options: list[str],
-    episode_options: list[int],
-    delay_options: list[float],
-    train_seed_options: list[int],
-    playback_seed_options: list[int],
-    learning_rate_options: list[float],
-    discount_factor_options: list[float],
-    epsilon_start_options: list[float],
-    epsilon_decay_options: list[float],
-    epsilon_min_options: list[float],
     result_view_options: list[str],
 ) -> dict[str, pygame.Rect | list[pygame.Rect]]:
     screen.fill(BACKGROUND_COLOR)
@@ -506,22 +513,22 @@ def draw_menu(
     draw_dropdown_box(screen, fonts, "Algorithm", model_name, model_rect, open_dropdown == "model")
     draw_dropdown_box(screen, fonts, "Result View", result_view, result_rect, open_dropdown == "result_view")
 
-    draw_dropdown_box(screen, fonts, "Episodes", str(episodes), episodes_rect, open_dropdown == "episodes")
-    draw_dropdown_box(screen, fonts, "Train Seed", str(train_seed), train_seed_rect, open_dropdown == "train_seed")
-    draw_dropdown_box(screen, fonts, "Playback Seed", str(playback_seed), playback_seed_rect, open_dropdown == "playback_seed")
+    draw_input_box(screen, fonts, "Episodes", input_values.get("episodes", ""), episodes_rect, active_input == "episodes")
+    draw_input_box(screen, fonts, "Train Seed", input_values.get("train_seed", ""), train_seed_rect, active_input == "train_seed")
+    draw_input_box(screen, fonts, "Playback Seed", input_values.get("playback_seed", ""), playback_seed_rect, active_input == "playback_seed")
 
-    draw_dropdown_box(screen, fonts, "Learning Rate", f"{learning_rate:.3f}", lr_rect, open_dropdown == "learning_rate")
-    draw_dropdown_box(screen, fonts, "Discount Factor", f"{discount_factor:.3f}", gamma_rect, open_dropdown == "discount_factor")
-    draw_dropdown_box(screen, fonts, "Epsilon Start", f"{epsilon_start:.2f}", eps_start_rect, open_dropdown == "epsilon_start")
+    draw_input_box(screen, fonts, "Learning Rate", input_values.get("learning_rate", ""), lr_rect, active_input == "learning_rate")
+    draw_input_box(screen, fonts, "Discount Factor", input_values.get("discount_factor", ""), gamma_rect, active_input == "discount_factor")
+    draw_input_box(screen, fonts, "Epsilon Start", input_values.get("epsilon_start", ""), eps_start_rect, active_input == "epsilon_start")
 
-    draw_dropdown_box(screen, fonts, "Epsilon Decay", f"{epsilon_decay:.3f}", eps_decay_rect, open_dropdown == "epsilon_decay")
-    draw_dropdown_box(screen, fonts, "Epsilon Min", f"{epsilon_min:.2f}", eps_min_rect, open_dropdown == "epsilon_min")
-    draw_dropdown_box(screen, fonts, "Playback Delay", f"{step_delay:.1f}s", delay_rect, open_dropdown == "delay")
+    draw_input_box(screen, fonts, "Epsilon Decay", input_values.get("epsilon_decay", ""), eps_decay_rect, active_input == "epsilon_decay")
+    draw_input_box(screen, fonts, "Epsilon Min", input_values.get("epsilon_min", ""), eps_min_rect, active_input == "epsilon_min")
+    draw_input_box(screen, fonts, "Playback Delay", input_values.get("delay", ""), delay_rect, active_input == "delay")
 
     notes = [
-        "q_learning: train from the selected seed and hyperparameters, then switch to playback",
-        "random_baseline: skip training and preview a random rollout directly",
-        "Large maps usually need longer training and slower epsilon decay",
+        "Numeric fields accept direct typing. Click a field, edit the value, then press Enter or click elsewhere.",
+        "Recommended baseline for hard maps: 200000 episodes, gamma 0.99, epsilon_decay 0.99995.",
+        "random_baseline skips training and jumps directly to playback.",
     ]
     note_y = panel_rect.top + 455
     for note in notes:
@@ -551,15 +558,6 @@ def draw_menu(
         "map_options": [],
         "model_options": [],
         "result_options": [],
-        "episodes_options": [],
-        "train_seed_options": [],
-        "playback_seed_options": [],
-        "learning_rate_options": [],
-        "discount_factor_options": [],
-        "epsilon_start_options": [],
-        "epsilon_decay_options": [],
-        "epsilon_min_options": [],
-        "delay_options": [],
     }
 
     if open_dropdown == "map":
@@ -568,24 +566,6 @@ def draw_menu(
         option_rects["model_options"] = draw_dropdown_overlay(screen, fonts, model_rect, model_options, mouse_pos)
     elif open_dropdown == "result_view":
         option_rects["result_options"] = draw_dropdown_overlay(screen, fonts, result_rect, result_view_options, mouse_pos)
-    elif open_dropdown == "episodes":
-        option_rects["episodes_options"] = draw_dropdown_overlay(screen, fonts, episodes_rect, [str(x) for x in episode_options], mouse_pos)
-    elif open_dropdown == "train_seed":
-        option_rects["train_seed_options"] = draw_dropdown_overlay(screen, fonts, train_seed_rect, [str(x) for x in train_seed_options], mouse_pos)
-    elif open_dropdown == "playback_seed":
-        option_rects["playback_seed_options"] = draw_dropdown_overlay(screen, fonts, playback_seed_rect, [str(x) for x in playback_seed_options], mouse_pos)
-    elif open_dropdown == "learning_rate":
-        option_rects["learning_rate_options"] = draw_dropdown_overlay(screen, fonts, lr_rect, [f"{x:.3f}" for x in learning_rate_options], mouse_pos)
-    elif open_dropdown == "discount_factor":
-        option_rects["discount_factor_options"] = draw_dropdown_overlay(screen, fonts, gamma_rect, [f"{x:.3f}" for x in discount_factor_options], mouse_pos)
-    elif open_dropdown == "epsilon_start":
-        option_rects["epsilon_start_options"] = draw_dropdown_overlay(screen, fonts, eps_start_rect, [f"{x:.2f}" for x in epsilon_start_options], mouse_pos)
-    elif open_dropdown == "epsilon_decay":
-        option_rects["epsilon_decay_options"] = draw_dropdown_overlay(screen, fonts, eps_decay_rect, [f"{x:.3f}" for x in epsilon_decay_options], mouse_pos)
-    elif open_dropdown == "epsilon_min":
-        option_rects["epsilon_min_options"] = draw_dropdown_overlay(screen, fonts, eps_min_rect, [f"{x:.2f}" for x in epsilon_min_options], mouse_pos)
-    elif open_dropdown == "delay":
-        option_rects["delay_options"] = draw_dropdown_overlay(screen, fonts, delay_rect, [f"{x:.1f}s" for x in delay_options], mouse_pos)
 
     return {**dropdown_rects, **option_rects}
 

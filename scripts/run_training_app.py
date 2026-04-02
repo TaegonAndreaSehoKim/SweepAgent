@@ -23,27 +23,21 @@ from utils.ui_utils import (
 from ui.training_app_core import (
     Button,
     CLEANED_FILL,
-    DISCOUNT_FACTOR_OPTIONS,
-    EPISODE_OPTIONS,
-    EPSILON_DECAY_OPTIONS,
-    EPSILON_MIN_OPTIONS,
-    EPSILON_START_OPTIONS,
     EPSILON_FILL,
-    LEARNING_RATE_OPTIONS,
+    MENU_NUMERIC_FIELDS,
     MENU_HEIGHT,
     MENU_WIDTH,
     MODEL_OPTIONS,
-    PLAYBACK_SEED_OPTIONS,
     PLAYBACK_TOP_RESERVED,
     PROGRESS_FILL,
     RESULT_VIEW_OPTIONS,
-    STEP_DELAY_OPTIONS,
     SUCCESS_FILL,
-    TRAIN_SEED_OPTIONS,
     PreviewPolicy,
     clamp_step_delay,
+    commit_menu_numeric_input,
     compute_training_window_height,
     get_default_algorithm_params,
+    sync_menu_numeric_inputs,
 )
 from ui.training_app_handlers import (
     cancel_training,
@@ -97,12 +91,13 @@ def main() -> None:
         map_name="charge_required_v2" if "charge_required_v2" in MAP_PRESETS else list(MAP_PRESETS.keys())[0],
         algorithm_name="q_learning",
         result_view="single_playback",
-        episodes=5000,
+        episodes=200000,
         step_delay=0.5,
         train_seed=args.seed,
         playback_seed=args.random_seed,
         algorithm_params=get_default_algorithm_params("q_learning"),
     )
+    sync_menu_numeric_inputs(menu)
 
     training = TrainingState()
     preview = PreviewState()
@@ -126,6 +121,7 @@ def main() -> None:
         nonlocal app_state
         app_state = "menu"
         menu.open_dropdown = None
+        menu.active_input = None
 
     def toggle_single_pause() -> None:
         single_playback.is_paused = not single_playback.is_paused
@@ -186,9 +182,36 @@ def main() -> None:
 
     def slower() -> None:
         menu.step_delay = clamp_step_delay(menu.step_delay + 0.1, 0.1, 1.5)
+        sync_menu_numeric_inputs(menu)
 
     def faster() -> None:
         menu.step_delay = clamp_step_delay(menu.step_delay - 0.1, 0.1, 1.5)
+        sync_menu_numeric_inputs(menu)
+
+    def commit_active_input() -> bool:
+        if menu.active_input is None:
+            return False
+
+        field_name = menu.active_input
+        previous_train_seed = menu.train_seed
+        changed = commit_menu_numeric_input(menu, field_name)
+        menu.active_input = None
+
+        if field_name == "train_seed" and menu.train_seed != previous_train_seed:
+            rebuild_training_preview_env(
+                preview_state=preview,
+                menu=menu,
+                preview_policy_cls=PreviewPolicy,
+                seed=menu.train_seed,
+            )
+
+        return changed
+
+    def commit_all_inputs() -> None:
+        for field_name in MENU_NUMERIC_FIELDS:
+            menu.active_input = field_name
+            commit_active_input()
+        menu.active_input = None
 
     while True:
         mouse_clicked = False
@@ -235,6 +258,21 @@ def main() -> None:
                 pygame.quit()
                 return
 
+            if event.type == pygame.KEYDOWN and app_state == "menu" and menu.active_input is not None:
+                if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_TAB):
+                    commit_active_input()
+                elif event.key == pygame.K_BACKSPACE:
+                    menu.input_values[menu.active_input] = menu.input_values.get(menu.active_input, "")[:-1]
+                elif event.key == pygame.K_MINUS:
+                    current_value = menu.input_values.get(menu.active_input, "")
+                    if not current_value:
+                        menu.input_values[menu.active_input] = "-"
+                else:
+                    if event.unicode and event.unicode in "0123456789.eE":
+                        menu.input_values[menu.active_input] = (
+                            menu.input_values.get(menu.active_input, "") + event.unicode
+                        )
+
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_clicked = True
 
@@ -280,28 +318,12 @@ def main() -> None:
                 map_name=menu.map_name,
                 model_name=menu.algorithm_name,
                 result_view=menu.result_view,
-                episodes=menu.episodes,
-                step_delay=menu.step_delay,
-                train_seed=menu.train_seed,
-                playback_seed=menu.playback_seed,
-                learning_rate=menu.algorithm_params.get("learning_rate", 0.0),
-                discount_factor=menu.algorithm_params.get("discount_factor", 0.0),
-                epsilon_start=menu.algorithm_params.get("epsilon_start", 0.0),
-                epsilon_decay=menu.algorithm_params.get("epsilon_decay", 0.0),
-                epsilon_min=menu.algorithm_params.get("epsilon_min", 0.0),
+                input_values=menu.input_values,
                 open_dropdown=menu.open_dropdown,
+                active_input=menu.active_input,
                 buttons=menu_buttons,
                 map_options=list(MAP_PRESETS.keys()),
                 model_options=MODEL_OPTIONS,
-                episode_options=EPISODE_OPTIONS,
-                delay_options=STEP_DELAY_OPTIONS,
-                train_seed_options=TRAIN_SEED_OPTIONS,
-                playback_seed_options=PLAYBACK_SEED_OPTIONS,
-                learning_rate_options=LEARNING_RATE_OPTIONS,
-                discount_factor_options=DISCOUNT_FACTOR_OPTIONS,
-                epsilon_start_options=EPSILON_START_OPTIONS,
-                epsilon_decay_options=EPSILON_DECAY_OPTIONS,
-                epsilon_min_options=EPSILON_MIN_OPTIONS,
                 result_view_options=RESULT_VIEW_OPTIONS,
             )
 
@@ -310,19 +332,11 @@ def main() -> None:
 
                 # 1) Open dropdown option clicks must be handled first.
                 if menu.open_dropdown is not None:
+                    commit_active_input()
                     option_key = {
                         "map": "map_options",
                         "model": "model_options",
                         "result_view": "result_options",
-                        "episodes": "episodes_options",
-                        "train_seed": "train_seed_options",
-                        "playback_seed": "playback_seed_options",
-                        "learning_rate": "learning_rate_options",
-                        "discount_factor": "discount_factor_options",
-                        "epsilon_start": "epsilon_start_options",
-                        "epsilon_decay": "epsilon_decay_options",
-                        "epsilon_min": "epsilon_min_options",
-                        "delay": "delay_options",
                     }[menu.open_dropdown]
 
                     option_rects = dropdown_ui[option_key]
@@ -344,32 +358,9 @@ def main() -> None:
                                 elif menu.open_dropdown == "model":
                                     menu.algorithm_name = MODEL_OPTIONS[idx]
                                     menu.algorithm_params = get_default_algorithm_params(menu.algorithm_name)
+                                    sync_menu_numeric_inputs(menu)
                                 elif menu.open_dropdown == "result_view":
                                     menu.result_view = RESULT_VIEW_OPTIONS[idx]
-                                elif menu.open_dropdown == "episodes":
-                                    menu.episodes = EPISODE_OPTIONS[idx]
-                                elif menu.open_dropdown == "train_seed":
-                                    menu.train_seed = TRAIN_SEED_OPTIONS[idx]
-                                    rebuild_training_preview_env(
-                                        preview_state=preview,
-                                        menu=menu,
-                                        preview_policy_cls=PreviewPolicy,
-                                        seed=menu.train_seed,
-                                    )
-                                elif menu.open_dropdown == "playback_seed":
-                                    menu.playback_seed = PLAYBACK_SEED_OPTIONS[idx]
-                                elif menu.open_dropdown == "learning_rate":
-                                    menu.algorithm_params["learning_rate"] = LEARNING_RATE_OPTIONS[idx]
-                                elif menu.open_dropdown == "discount_factor":
-                                    menu.algorithm_params["discount_factor"] = DISCOUNT_FACTOR_OPTIONS[idx]
-                                elif menu.open_dropdown == "epsilon_start":
-                                    menu.algorithm_params["epsilon_start"] = EPSILON_START_OPTIONS[idx]
-                                elif menu.open_dropdown == "epsilon_decay":
-                                    menu.algorithm_params["epsilon_decay"] = EPSILON_DECAY_OPTIONS[idx]
-                                elif menu.open_dropdown == "epsilon_min":
-                                    menu.algorithm_params["epsilon_min"] = EPSILON_MIN_OPTIONS[idx]
-                                elif menu.open_dropdown == "delay":
-                                    menu.step_delay = STEP_DELAY_OPTIONS[idx]
 
                                 menu.open_dropdown = None
                                 handled = True
@@ -384,6 +375,7 @@ def main() -> None:
                 if not handled:
                     for button in menu_buttons:
                         if button.rect.collidepoint(mouse_pos):
+                            commit_all_inputs()
                             app_state = start_selected_flow(
                                 menu=menu,
                                 training=training,
@@ -397,12 +389,9 @@ def main() -> None:
                             handled = True
                             break
 
-                # 3) Finally handle dropdown header toggles.
+                # 3) Then handle direct input fields.
                 if not handled:
-                    dropdown_boxes = {
-                        "map": dropdown_ui["map_rect"],
-                        "model": dropdown_ui["model_rect"],
-                        "result_view": dropdown_ui["result_rect"],
+                    input_boxes = {
                         "episodes": dropdown_ui["episodes_rect"],
                         "train_seed": dropdown_ui["train_seed_rect"],
                         "playback_seed": dropdown_ui["playback_seed_rect"],
@@ -414,11 +403,32 @@ def main() -> None:
                         "delay": dropdown_ui["delay_rect"],
                     }
 
+                    for key, rect in input_boxes.items():
+                        if isinstance(rect, pygame.Rect) and rect.collidepoint(mouse_pos):
+                            if menu.active_input is not None and menu.active_input != key:
+                                commit_active_input()
+                            menu.active_input = key
+                            menu.open_dropdown = None
+                            handled = True
+                            break
+
+                # 4) Finally handle dropdown header toggles.
+                if not handled:
+                    dropdown_boxes = {
+                        "map": dropdown_ui["map_rect"],
+                        "model": dropdown_ui["model_rect"],
+                        "result_view": dropdown_ui["result_rect"],
+                    }
+
                     for key, rect in dropdown_boxes.items():
                         if isinstance(rect, pygame.Rect) and rect.collidepoint(mouse_pos):
+                            commit_active_input()
                             menu.open_dropdown = None if menu.open_dropdown == key else key
                             handled = True
                             break
+
+                if not handled and menu.active_input is not None:
+                    commit_active_input()
 
         elif app_state == "training":
             if screen.get_width() != MENU_WIDTH or screen.get_height() != training_height:

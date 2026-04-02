@@ -84,14 +84,27 @@ SCROLL_THUMB = (173, 181, 189)
 CURRICULUM_STAGE1_MAP = "charge_maze_medium"
 CURRICULUM_STAGE1_MIN_EPISODES = 20000
 CURRICULUM_STAGE2_MIN_EPISODES = 50000
+DEFAULT_PRINT_EVERY = 1000
+
+MENU_NUMERIC_FIELDS = (
+    "episodes",
+    "train_seed",
+    "playback_seed",
+    "learning_rate",
+    "discount_factor",
+    "epsilon_start",
+    "epsilon_decay",
+    "epsilon_min",
+    "delay",
+)
 
 ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
     "q_learning": {
-        "learning_rate": 0.10,
-        "discount_factor": 0.95,
+        "learning_rate": 0.05,
+        "discount_factor": 0.99,
         "epsilon_start": 1.00,
-        "epsilon_decay": 0.995,
-        "epsilon_min": 0.05,
+        "epsilon_decay": 0.99995,
+        "epsilon_min": 0.15,
     },
     "curriculum_q_learning": {
         "stage1_learning_rate": 0.05,
@@ -101,9 +114,9 @@ ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
         "stage1_epsilon_min": 0.05,
         "stage2_learning_rate": 0.05,
         "stage2_discount_factor": 0.99,
-        "stage2_epsilon_start": 0.30,
-        "stage2_epsilon_decay": 0.999,
-        "stage2_epsilon_min": 0.10,
+        "stage2_epsilon_start": 1.00,
+        "stage2_epsilon_decay": 0.99995,
+        "stage2_epsilon_min": 0.15,
     },
     "random_baseline": {},
 }
@@ -265,9 +278,9 @@ def get_display_hyperparams(algorithm_name: str, algorithm_params: dict[str, flo
         return {
             "learning_rate": algorithm_params.get("stage2_learning_rate", 0.05),
             "discount_factor": algorithm_params.get("stage2_discount_factor", 0.99),
-            "epsilon_start": algorithm_params.get("stage2_epsilon_start", 0.30),
-            "epsilon_decay": algorithm_params.get("stage2_epsilon_decay", 0.999),
-            "epsilon_min": algorithm_params.get("stage2_epsilon_min", 0.10),
+            "epsilon_start": algorithm_params.get("stage2_epsilon_start", 1.00),
+            "epsilon_decay": algorithm_params.get("stage2_epsilon_decay", 0.99995),
+            "epsilon_min": algorithm_params.get("stage2_epsilon_min", 0.15),
         }
 
     return {
@@ -287,6 +300,103 @@ def update_menu_hyperparam(menu, param_name: str, value: float) -> None:
         return
 
     menu.algorithm_params[param_name] = value
+
+
+def get_menu_numeric_value(menu, field_name: str) -> int | float:
+    if field_name == "episodes":
+        return int(menu.episodes)
+    if field_name == "train_seed":
+        return int(menu.train_seed)
+    if field_name == "playback_seed":
+        return int(menu.playback_seed)
+    if field_name == "delay":
+        return float(menu.step_delay)
+    if field_name in {
+        "learning_rate",
+        "discount_factor",
+        "epsilon_start",
+        "epsilon_decay",
+        "epsilon_min",
+    }:
+        display_params = get_display_hyperparams(menu.algorithm_name, menu.algorithm_params)
+        return float(display_params.get(field_name, 0.0))
+    raise KeyError(f"Unsupported numeric field: {field_name}")
+
+
+def format_menu_numeric_value(field_name: str, value: int | float) -> str:
+    if field_name in {"episodes", "train_seed", "playback_seed"}:
+        return str(int(value))
+    if field_name == "learning_rate":
+        return f"{float(value):.5f}".rstrip("0").rstrip(".")
+    if field_name == "discount_factor":
+        return f"{float(value):.5f}".rstrip("0").rstrip(".")
+    if field_name == "epsilon_start":
+        return f"{float(value):.5f}".rstrip("0").rstrip(".")
+    if field_name == "epsilon_decay":
+        return f"{float(value):.5f}".rstrip("0").rstrip(".")
+    if field_name == "epsilon_min":
+        return f"{float(value):.5f}".rstrip("0").rstrip(".")
+    if field_name == "delay":
+        return f"{float(value):.3f}".rstrip("0").rstrip(".")
+    raise KeyError(f"Unsupported numeric field: {field_name}")
+
+
+def sync_menu_numeric_inputs(menu) -> None:
+    menu.input_values = {
+        field_name: format_menu_numeric_value(
+            field_name,
+            get_menu_numeric_value(menu, field_name),
+        )
+        for field_name in MENU_NUMERIC_FIELDS
+    }
+
+
+def commit_menu_numeric_input(menu, field_name: str) -> bool:
+    raw_value = menu.input_values.get(field_name, "").strip()
+    previous_value = get_menu_numeric_value(menu, field_name)
+
+    try:
+        if field_name in {"episodes", "train_seed", "playback_seed"}:
+            parsed_value = int(raw_value)
+        else:
+            parsed_value = float(raw_value)
+    except ValueError:
+        menu.input_values[field_name] = format_menu_numeric_value(field_name, previous_value)
+        return False
+
+    valid = True
+    if field_name == "episodes":
+        valid = parsed_value >= 1
+        if valid:
+            menu.episodes = int(parsed_value)
+    elif field_name == "train_seed":
+        menu.train_seed = int(parsed_value)
+    elif field_name == "playback_seed":
+        menu.playback_seed = int(parsed_value)
+    elif field_name == "delay":
+        valid = parsed_value > 0
+        if valid:
+            menu.step_delay = float(parsed_value)
+    elif field_name == "learning_rate":
+        valid = parsed_value > 0
+        if valid:
+            update_menu_hyperparam(menu, field_name, float(parsed_value))
+    elif field_name == "discount_factor":
+        valid = 0 < parsed_value <= 1
+        if valid:
+            update_menu_hyperparam(menu, field_name, float(parsed_value))
+    elif field_name in {"epsilon_start", "epsilon_min"}:
+        valid = 0 <= parsed_value <= 1
+        if valid:
+            update_menu_hyperparam(menu, field_name, float(parsed_value))
+    elif field_name == "epsilon_decay":
+        valid = 0 < parsed_value <= 1
+        if valid:
+            update_menu_hyperparam(menu, field_name, float(parsed_value))
+
+    current_value = get_menu_numeric_value(menu, field_name)
+    menu.input_values[field_name] = format_menu_numeric_value(field_name, current_value)
+    return valid and current_value != previous_value
 
 
 def build_training_command(
@@ -309,7 +419,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            "100",
+            str(DEFAULT_PRINT_EVERY),
         ]
 
         if "learning_rate" in algorithm_params:
@@ -340,7 +450,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            "100",
+            str(DEFAULT_PRINT_EVERY),
         ]
 
         if "stage1_learning_rate" in algorithm_params:

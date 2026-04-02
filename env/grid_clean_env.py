@@ -271,14 +271,16 @@ class GridCleanEnv:
                 else:
                     reward += self.reward_move
 
-            # Charger shaping intentionally disabled.
-            # Keep emergency_mode computation only for future debugging/tuning.
             if emergency_mode and charger_distance_before != -1:
                 charger_distance_after = self._distance_to_nearest_charger(
                     next_row,
                     next_col,
                 )
-                _ = charger_distance_after
+                if charger_distance_after != -1:
+                    if charger_distance_after < charger_distance_before:
+                        reward += self.reward_move_toward_charger
+                    elif charger_distance_after > charger_distance_before:
+                        reward += self.penalty_move_away_from_charger
 
             if self._is_charger(next_row, next_col) and self.battery_capacity is not None:
                 if self.battery_remaining < self.battery_capacity:
