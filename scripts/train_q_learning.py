@@ -228,17 +228,18 @@ def train_one_episode(env, agent: QLearningAgent) -> dict[str, float]:
     state = env.reset()
     done = False
     total_reward = 0.0
-    final_info: dict[str, float] = {}
+    termination_reason = "ongoing"
 
     while not done:
         action = agent.select_action(state, training=True)
-        next_state, reward, done, info = env.step(action)
+        next_state, reward, done, termination_reason = env.step_training(action)
 
         agent.update(state, action, reward, next_state, done)
 
         state = next_state
         total_reward += reward
-        final_info = info
+
+    final_info = env.get_episode_info(termination_reason=termination_reason)
 
     return {
         "total_reward": total_reward,

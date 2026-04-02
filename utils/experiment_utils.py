@@ -130,11 +130,12 @@ def train_q_learning_agent(
         state = env.reset()
         done = False
         total_reward = 0.0
-        final_info: Dict[str, float] = {}
+        final_info: Dict[str, float | str] = {}
+        termination_reason = "ongoing"
 
         while not done:
             action = agent.select_action(state, training=True)
-            next_state, reward, done, info = env.step(action)
+            next_state, reward, done, termination_reason = env.step_training(action)
 
             agent.update(
                 state=state,
@@ -146,7 +147,8 @@ def train_q_learning_agent(
 
             state = next_state
             total_reward += reward
-            final_info = info
+
+        final_info = env.get_episode_info(termination_reason=termination_reason)
 
         agent.decay_epsilon()
         rewards.append(total_reward)

@@ -92,6 +92,7 @@ class GridCleanEnv:
             pos: idx for idx, pos in enumerate(self.dirty_positions)
         }
         self.total_dirty_tiles = len(self.dirty_positions)
+        self.safe_dirty_distance_cache: dict[tuple[int, int, int, int], int] = {}
 
         self.robot_pos: Tuple[int, int] = self.start_pos
         self.cleaned_mask: int = 0
@@ -234,6 +235,11 @@ class GridCleanEnv:
         if battery_remaining is None or not self._should_consider_charger():
             return -1
 
+        cache_key = (row, col, self.cleaned_mask, battery_remaining)
+        cached_distance = self.safe_dirty_distance_cache.get(cache_key)
+        if cached_distance is not None:
+            return cached_distance
+
         safety_reserve = self._battery_safety_reserve()
         best_distance = -1
 
@@ -255,6 +261,7 @@ class GridCleanEnv:
             if best_distance == -1 or distance_to_dirty < best_distance:
                 best_distance = distance_to_dirty
 
+        self.safe_dirty_distance_cache[cache_key] = best_distance
         return best_distance
 
     def _clean_tile(self, row: int, col: int) -> None:
@@ -286,6 +293,31 @@ class GridCleanEnv:
             self._get_battery_state_value(),
         )
 
+    def _build_step_info(
+        self,
+        recharged: bool,
+        termination_reason: str,
+    ) -> Dict[str, float | str]:
+        return {
+            "steps_taken": self.steps_taken,
+            "cleaned_tiles": self._count_cleaned_tiles(),
+            "total_dirty_tiles": self.total_dirty_tiles,
+            "cleaned_ratio": (
+                self._count_cleaned_tiles() / self.total_dirty_tiles
+                if self.total_dirty_tiles > 0
+                else 1.0
+            ),
+            "battery_remaining": (
+                self.battery_remaining if self.battery_remaining is not None else -1
+            ),
+            "battery_capacity": (
+                self.battery_capacity if self.battery_capacity is not None else -1
+            ),
+            "battery_enabled": 1.0 if self.battery_capacity is not None else 0.0,
+            "recharged": 1.0 if recharged else 0.0,
+            "termination_reason": termination_reason,
+        }
+
     def reset(self) -> Tuple[int, int, int, int]:
         self.robot_pos = self.start_pos
         self.cleaned_mask = 0
@@ -295,7 +327,7 @@ class GridCleanEnv:
         self.visited_positions = {self.start_pos}
         return self._get_state()
 
-    def step(self, action: int) -> Tuple[Tuple[int, int, int, int], float, bool, Dict[str, float | str]]:
+    def _step_core(self, action: int) -> tuple[Tuple[int, int, int, int], float, bool, bool, str]:
         if action not in self.ACTIONS:
             raise ValueError(f"Invalid action: {action}")
 
@@ -446,27 +478,29 @@ class GridCleanEnv:
             done = True
             termination_reason = "step_limit"
 
-        info = {
-            "steps_taken": self.steps_taken,
-            "cleaned_tiles": self._count_cleaned_tiles(),
-            "total_dirty_tiles": self.total_dirty_tiles,
-            "cleaned_ratio": (
-                self._count_cleaned_tiles() / self.total_dirty_tiles
-                if self.total_dirty_tiles > 0
-                else 1.0
-            ),
-            "battery_remaining": (
-                self.battery_remaining if self.battery_remaining is not None else -1
-            ),
-            "battery_capacity": (
-                self.battery_capacity if self.battery_capacity is not None else -1
-            ),
-            "battery_enabled": 1.0 if self.battery_capacity is not None else 0.0,
-            "recharged": 1.0 if recharged else 0.0,
-            "termination_reason": termination_reason,
-        }
+        return self._get_state(), reward, done, recharged, termination_reason
 
-        return self._get_state(), reward, done, info
+    def step(self, action: int) -> Tuple[Tuple[int, int, int, int], float, bool, Dict[str, float | str]]:
+        next_state, reward, done, recharged, termination_reason = self._step_core(action)
+        return (
+            next_state,
+            reward,
+            done,
+            self._build_step_info(
+                recharged=recharged,
+                termination_reason=termination_reason,
+            ),
+        )
+
+    def step_training(self, action: int) -> tuple[Tuple[int, int, int, int], float, bool, str]:
+        next_state, reward, done, _, termination_reason = self._step_core(action)
+        return next_state, reward, done, termination_reason
+
+    def get_episode_info(self, termination_reason: str) -> Dict[str, float | str]:
+        return self._build_step_info(
+            recharged=False,
+            termination_reason=termination_reason,
+        )
 
     def render(self) -> None:
         display_grid = [row[:] for row in self.grid]
