@@ -224,6 +224,14 @@ SweepAgent/
 python scripts/train_q_learning.py --map-name complex_charge_switchback --episodes 200000 --seed 42
 ```
 
+### Run batch training in parallel
+
+```bash
+python scripts/train_q_batch.py --maps complex_charge_labyrinth complex_charge_switchback --seeds 41 42 43 --episodes 200000 --max-workers 3
+```
+
+This workflow launches multiple `train_q_learning.py` runs in parallel subprocesses, writes one log per run under `outputs/logs/`, and saves a batch summary CSV.
+
 ### Compare random vs learned agent
 
 ```bash
