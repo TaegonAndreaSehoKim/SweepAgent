@@ -189,11 +189,52 @@ Once the hard maps became solvable, runtime efficiency became the next practical
 
 ---
 
+## 10. Follow-up Runtime Work
+
+After the first optimization pass, the project moved from "reduce per-step overhead" to "use more of the machine during experiment runs."
+
+### Additional optimization work
+
+- added caching for safe-dirty lookup results inside the environment
+- added a lighter training-only environment step path so training does not build a full `info` payload on every step
+
+These changes did not radically change wall-clock time by themselves, but they cleaned up the hottest path and prepared the codebase for larger experiment batches.
+
+### Parallel batch training
+
+A new batch training script was added for practical CPU utilization:
+
+- `scripts/train_q_batch.py`
+
+This workflow:
+
+- launches multiple `train_q_learning.py` runs as parallel subprocesses
+- allows one command to sweep multiple maps and seeds
+- writes one log file per run
+- writes a CSV summary for the whole batch
+
+### Why this matters
+
+The current learning algorithm is still single-process tabular Q-learning.
+That means one training run will not naturally saturate a modern multi-core machine.
+
+The more practical solution was not to force one Q-learning run to use every core.
+It was to make many independent experiment runs easy to launch at the same time.
+
+That gives the project a better way to use available CPU resources for:
+
+- seed sweeps
+- map comparisons
+- training recipe comparisons
+
+---
+
 ## Next Steps
 
 The most natural next steps from here are:
 
 - measure actual wall-clock speed gains from the new environment optimizations
+- benchmark the new batch runner on larger seed sweeps
 - decide whether `complex_charge_bastion` should keep its larger battery override or receive a stricter evaluation preset
 - compare multiple seeds systematically on the three hard maps
 - decide whether to keep investing in tabular Q-learning or move to a neural approximation method for better scaling
