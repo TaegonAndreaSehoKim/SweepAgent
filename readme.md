@@ -112,6 +112,15 @@ For each preset, the project:
    - rounding up to a fixed unit
 3. allows per-map overrides when a harder map needs more training slack
 
+Battery capacity is now split by purpose:
+
+- `battery_capacity_training`
+- `battery_capacity_evaluation`
+
+This allows a hard map to train with more slack while still being evaluated under a stricter setting.
+For backward compatibility, the legacy `battery_capacity` field now points to the evaluation capacity.
+The training scripts use the training profile, while evaluation, comparison, rendering, and playback flows use the evaluation profile.
+
 Recent charge-aware reward changes also added:
 
 - weaker charger-only shaping to avoid recharge loops
