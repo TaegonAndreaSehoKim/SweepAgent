@@ -85,11 +85,12 @@ SCROLL_THUMB = (173, 181, 189)
 CURRICULUM_STAGE1_MAP = "charge_maze_medium"
 CURRICULUM_STAGE1_MIN_EPISODES = 20000
 CURRICULUM_STAGE2_MIN_EPISODES = 50000
-BATTERY_ADAPT_STAGE2_EPISODES = 50000
+DEFAULT_BATTERY_ADAPT_STAGE2_EPISODES = 50000
 DEFAULT_PRINT_EVERY = 1000
 
 MENU_NUMERIC_FIELDS = (
     "episodes",
+    "stage2_episodes",
     "train_seed",
     "playback_seed",
     "learning_rate",
@@ -114,6 +115,7 @@ ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
         "stage1_epsilon_start": 1.00,
         "stage1_epsilon_decay": 0.99999,
         "stage1_epsilon_min": 0.20,
+        "stage2_episodes": DEFAULT_BATTERY_ADAPT_STAGE2_EPISODES,
         "stage2_learning_rate": 0.05,
         "stage2_discount_factor": 0.99,
         "stage2_epsilon_start": 0.30,
@@ -270,11 +272,24 @@ def get_playback_target_map_name(algorithm_name: str, selected_map_name: str) ->
     return selected_map_name
 
 
-def get_playback_target_episodes(algorithm_name: str, selected_episodes: int) -> int:
+def get_battery_adapt_stage2_episodes(algorithm_params: dict[str, float] | None = None) -> int:
+    algorithm_params = algorithm_params or {}
+    raw_value = algorithm_params.get(
+        "stage2_episodes",
+        DEFAULT_BATTERY_ADAPT_STAGE2_EPISODES,
+    )
+    return max(1, int(raw_value))
+
+
+def get_playback_target_episodes(
+    algorithm_name: str,
+    selected_episodes: int,
+    algorithm_params: dict[str, float] | None = None,
+) -> int:
     if algorithm_name == "curriculum_q_learning":
         return max(CURRICULUM_STAGE2_MIN_EPISODES, selected_episodes)
     if algorithm_name == "battery_adapt_q_learning":
-        return selected_episodes + BATTERY_ADAPT_STAGE2_EPISODES
+        return selected_episodes + get_battery_adapt_stage2_episodes(algorithm_params)
     return selected_episodes
 
 
@@ -283,9 +298,14 @@ def get_preview_checkpoint_path(
     selected_map_name: str,
     selected_episodes: int,
     seed: int,
+    algorithm_params: dict[str, float] | None = None,
 ) -> Path:
     preview_map_name = get_preview_map_name(algorithm_name, selected_map_name)
-    preview_episodes = get_playback_target_episodes(algorithm_name, selected_episodes)
+    preview_episodes = get_playback_target_episodes(
+        algorithm_name,
+        selected_episodes,
+        algorithm_params=algorithm_params,
+    )
     return get_checkpoint_path(preview_map_name, preview_episodes, seed)
 
 
@@ -321,6 +341,8 @@ def update_menu_hyperparam(menu, param_name: str, value: float) -> None:
 def get_menu_numeric_value(menu, field_name: str) -> int | float:
     if field_name == "episodes":
         return int(menu.episodes)
+    if field_name == "stage2_episodes":
+        return get_battery_adapt_stage2_episodes(menu.algorithm_params)
     if field_name == "train_seed":
         return int(menu.train_seed)
     if field_name == "playback_seed":
@@ -348,7 +370,7 @@ def format_menu_numeric_value(field_name: str, value: int | float) -> str:
         "epsilon_min": 8,
         "delay": 4,
     }
-    if field_name in {"episodes", "train_seed", "playback_seed"}:
+    if field_name in {"episodes", "stage2_episodes", "train_seed", "playback_seed"}:
         return str(int(value))
     if field_name in precision_map:
         return f"{float(value):.{precision_map[field_name]}f}".rstrip("0").rstrip(".")
@@ -370,7 +392,7 @@ def commit_menu_numeric_input(menu, field_name: str) -> bool:
     previous_value = get_menu_numeric_value(menu, field_name)
 
     try:
-        if field_name in {"episodes", "train_seed", "playback_seed"}:
+        if field_name in {"episodes", "stage2_episodes", "train_seed", "playback_seed"}:
             parsed_value = int(raw_value)
         else:
             parsed_value = float(raw_value)
@@ -383,6 +405,10 @@ def commit_menu_numeric_input(menu, field_name: str) -> bool:
         valid = parsed_value >= 1
         if valid:
             menu.episodes = int(parsed_value)
+    elif field_name == "stage2_episodes":
+        valid = parsed_value >= 1
+        if valid and menu.algorithm_name == "battery_adapt_q_learning":
+            menu.algorithm_params["stage2_episodes"] = float(parsed_value)
     elif field_name == "train_seed":
         menu.train_seed = int(parsed_value)
     elif field_name == "playback_seed":
@@ -450,6 +476,7 @@ def build_training_command(
         return command
 
     if algorithm_name == "battery_adapt_q_learning":
+        stage2_episodes = get_battery_adapt_stage2_episodes(algorithm_params)
         command = [
             sys.executable,
             "scripts/train_q_battery_adapt.py",
@@ -458,7 +485,7 @@ def build_training_command(
             "--stage1-episodes",
             str(episodes),
             "--stage2-episodes",
-            str(BATTERY_ADAPT_STAGE2_EPISODES),
+            str(stage2_episodes),
             "--seed",
             str(seed),
             "--print-every",

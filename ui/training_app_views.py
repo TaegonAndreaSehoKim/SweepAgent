@@ -490,6 +490,7 @@ def draw_menu(
     row2_y = panel_rect.top + 150
     row3_y = panel_rect.top + 240
     row4_y = panel_rect.top + 330
+    row5_y = panel_rect.top + 420
 
     field_h = 42
 
@@ -497,23 +498,42 @@ def draw_menu(
     model_rect = pygame.Rect(col2_x, row1_y, field_w, field_h)
     result_rect = pygame.Rect(col3_x, row1_y, field_w, field_h)
 
+    is_battery_adapt = model_name == "battery_adapt_q_learning"
+
     episodes_rect = pygame.Rect(col1_x, row2_y, field_w, field_h)
-    train_seed_rect = pygame.Rect(col2_x, row2_y, field_w, field_h)
-    playback_seed_rect = pygame.Rect(col3_x, row2_y, field_w, field_h)
+    stage2_episodes_rect = pygame.Rect(col2_x, row2_y, field_w, field_h) if is_battery_adapt else None
+    train_seed_rect = pygame.Rect(col3_x if is_battery_adapt else col2_x, row2_y, field_w, field_h)
 
-    lr_rect = pygame.Rect(col1_x, row3_y, field_w, field_h)
-    gamma_rect = pygame.Rect(col2_x, row3_y, field_w, field_h)
-    eps_start_rect = pygame.Rect(col3_x, row3_y, field_w, field_h)
+    playback_seed_rect = pygame.Rect(col1_x, row3_y, field_w, field_h) if is_battery_adapt else pygame.Rect(col3_x, row2_y, field_w, field_h)
+    lr_rect = pygame.Rect(col2_x if is_battery_adapt else col1_x, row3_y, field_w, field_h)
+    gamma_rect = pygame.Rect(col3_x if is_battery_adapt else col2_x, row3_y, field_w, field_h)
+    eps_start_rect = pygame.Rect(col1_x if is_battery_adapt else col3_x, row4_y if is_battery_adapt else row3_y, field_w, field_h)
 
-    eps_decay_rect = pygame.Rect(col1_x, row4_y, field_w, field_h)
-    eps_min_rect = pygame.Rect(col2_x, row4_y, field_w, field_h)
-    delay_rect = pygame.Rect(col3_x, row4_y, field_w, field_h)
+    eps_decay_rect = pygame.Rect(col2_x if is_battery_adapt else col1_x, row4_y, field_w, field_h)
+    eps_min_rect = pygame.Rect(col3_x if is_battery_adapt else col2_x, row4_y, field_w, field_h)
+    delay_rect = pygame.Rect(col1_x if is_battery_adapt else col3_x, row5_y if is_battery_adapt else row4_y, field_w, field_h)
 
     draw_dropdown_box(screen, fonts, "Map", map_name, map_rect, open_dropdown == "map")
     draw_dropdown_box(screen, fonts, "Algorithm", model_name, model_rect, open_dropdown == "model")
     draw_dropdown_box(screen, fonts, "Result View", result_view, result_rect, open_dropdown == "result_view")
 
-    draw_input_box(screen, fonts, "Episodes", input_values.get("episodes", ""), episodes_rect, active_input == "episodes")
+    draw_input_box(
+        screen,
+        fonts,
+        "Stage1 Episodes" if is_battery_adapt else "Episodes",
+        input_values.get("episodes", ""),
+        episodes_rect,
+        active_input == "episodes",
+    )
+    if is_battery_adapt and stage2_episodes_rect is not None:
+        draw_input_box(
+            screen,
+            fonts,
+            "Stage2 Episodes",
+            input_values.get("stage2_episodes", ""),
+            stage2_episodes_rect,
+            active_input == "stage2_episodes",
+        )
     draw_input_box(screen, fonts, "Train Seed", input_values.get("train_seed", ""), train_seed_rect, active_input == "train_seed")
     draw_input_box(screen, fonts, "Playback Seed", input_values.get("playback_seed", ""), playback_seed_rect, active_input == "playback_seed")
 
@@ -528,10 +548,10 @@ def draw_menu(
     notes = [
         "Numeric fields accept direct typing. Click a field, edit the value, then press Enter or click elsewhere.",
         "Recommended baseline for hard maps: 200000 episodes, gamma 0.99, epsilon_decay 0.99999.",
-        "battery_adapt_q_learning adds a 50000-episode evaluation-battery finetune stage after the base run.",
+        "battery_adapt_q_learning uses Stage1 as training-battery pretrain and Stage2 as evaluation-battery finetune.",
         "random_baseline skips training and jumps directly to playback.",
     ]
-    note_y = panel_rect.top + 455
+    note_y = panel_rect.top + (545 if is_battery_adapt else 455)
     for note in notes:
         note_surface = small_font(fonts).render(note, True, MUTED_TEXT_COLOR)
         screen.blit(note_surface, (panel_rect.left + 32, note_y))
@@ -545,6 +565,7 @@ def draw_menu(
         "model_rect": model_rect,
         "result_rect": result_rect,
         "episodes_rect": episodes_rect,
+        "stage2_episodes_rect": stage2_episodes_rect,
         "train_seed_rect": train_seed_rect,
         "playback_seed_rect": playback_seed_rect,
         "learning_rate_rect": lr_rect,

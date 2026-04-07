@@ -48,6 +48,7 @@ def rebuild_training_preview_env(
             selected_map_name=menu.map_name,
             selected_episodes=menu.episodes,
             seed=seed,
+            algorithm_params=menu.algorithm_params,
         )
     )
     preview_state.mode_label = "random fallback"
@@ -172,6 +173,7 @@ def update_training_from_subprocess(
     playback_episodes = get_playback_target_episodes(
         menu.algorithm_name,
         menu.episodes,
+        algorithm_params=menu.algorithm_params,
     )
 
     if menu.result_view == "single_playback":

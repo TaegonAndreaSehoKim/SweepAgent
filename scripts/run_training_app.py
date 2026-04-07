@@ -393,6 +393,7 @@ def main() -> None:
                 if not handled:
                     input_boxes = {
                         "episodes": dropdown_ui["episodes_rect"],
+                        "stage2_episodes": dropdown_ui["stage2_episodes_rect"],
                         "train_seed": dropdown_ui["train_seed_rect"],
                         "playback_seed": dropdown_ui["playback_seed_rect"],
                         "learning_rate": dropdown_ui["learning_rate_rect"],
