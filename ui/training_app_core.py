@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 MODEL_OPTIONS = [
     "q_learning",
+    "battery_adapt_q_learning",
     "curriculum_q_learning",
     "random_baseline",
 ]
@@ -84,6 +85,7 @@ SCROLL_THUMB = (173, 181, 189)
 CURRICULUM_STAGE1_MAP = "charge_maze_medium"
 CURRICULUM_STAGE1_MIN_EPISODES = 20000
 CURRICULUM_STAGE2_MIN_EPISODES = 50000
+BATTERY_ADAPT_STAGE2_EPISODES = 50000
 DEFAULT_PRINT_EVERY = 1000
 
 MENU_NUMERIC_FIELDS = (
@@ -103,8 +105,20 @@ ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
         "learning_rate": 0.05,
         "discount_factor": 0.99,
         "epsilon_start": 1.00,
-        "epsilon_decay": 0.99995,
-        "epsilon_min": 0.15,
+        "epsilon_decay": 0.99999,
+        "epsilon_min": 0.20,
+    },
+    "battery_adapt_q_learning": {
+        "stage1_learning_rate": 0.05,
+        "stage1_discount_factor": 0.99,
+        "stage1_epsilon_start": 1.00,
+        "stage1_epsilon_decay": 0.99999,
+        "stage1_epsilon_min": 0.20,
+        "stage2_learning_rate": 0.05,
+        "stage2_discount_factor": 0.99,
+        "stage2_epsilon_start": 0.30,
+        "stage2_epsilon_decay": 0.99998,
+        "stage2_epsilon_min": 0.08,
     },
     "curriculum_q_learning": {
         "stage1_learning_rate": 0.05,
@@ -259,6 +273,8 @@ def get_playback_target_map_name(algorithm_name: str, selected_map_name: str) ->
 def get_playback_target_episodes(algorithm_name: str, selected_episodes: int) -> int:
     if algorithm_name == "curriculum_q_learning":
         return max(CURRICULUM_STAGE2_MIN_EPISODES, selected_episodes)
+    if algorithm_name == "battery_adapt_q_learning":
+        return selected_episodes + BATTERY_ADAPT_STAGE2_EPISODES
     return selected_episodes
 
 
@@ -274,13 +290,13 @@ def get_preview_checkpoint_path(
 
 
 def get_display_hyperparams(algorithm_name: str, algorithm_params: dict[str, float]) -> dict[str, float]:
-    if algorithm_name == "curriculum_q_learning":
+    if algorithm_name in {"curriculum_q_learning", "battery_adapt_q_learning"}:
         return {
             "learning_rate": algorithm_params.get("stage2_learning_rate", 0.05),
             "discount_factor": algorithm_params.get("stage2_discount_factor", 0.99),
-            "epsilon_start": algorithm_params.get("stage2_epsilon_start", 1.00),
-            "epsilon_decay": algorithm_params.get("stage2_epsilon_decay", 0.99995),
-            "epsilon_min": algorithm_params.get("stage2_epsilon_min", 0.15),
+            "epsilon_start": algorithm_params.get("stage2_epsilon_start", 0.30),
+            "epsilon_decay": algorithm_params.get("stage2_epsilon_decay", 0.99998),
+            "epsilon_min": algorithm_params.get("stage2_epsilon_min", 0.08),
         }
 
     return {
@@ -293,7 +309,7 @@ def get_display_hyperparams(algorithm_name: str, algorithm_params: dict[str, flo
 
 
 def update_menu_hyperparam(menu, param_name: str, value: float) -> None:
-    if menu.algorithm_name == "curriculum_q_learning":
+    if menu.algorithm_name in {"curriculum_q_learning", "battery_adapt_q_learning"}:
         stage2_key = f"stage2_{param_name}"
         if stage2_key in menu.algorithm_params:
             menu.algorithm_params[stage2_key] = value
@@ -324,20 +340,18 @@ def get_menu_numeric_value(menu, field_name: str) -> int | float:
 
 
 def format_menu_numeric_value(field_name: str, value: int | float) -> str:
+    precision_map = {
+        "learning_rate": 8,
+        "discount_factor": 8,
+        "epsilon_start": 8,
+        "epsilon_decay": 8,
+        "epsilon_min": 8,
+        "delay": 4,
+    }
     if field_name in {"episodes", "train_seed", "playback_seed"}:
         return str(int(value))
-    if field_name == "learning_rate":
-        return f"{float(value):.5f}".rstrip("0").rstrip(".")
-    if field_name == "discount_factor":
-        return f"{float(value):.5f}".rstrip("0").rstrip(".")
-    if field_name == "epsilon_start":
-        return f"{float(value):.5f}".rstrip("0").rstrip(".")
-    if field_name == "epsilon_decay":
-        return f"{float(value):.5f}".rstrip("0").rstrip(".")
-    if field_name == "epsilon_min":
-        return f"{float(value):.5f}".rstrip("0").rstrip(".")
-    if field_name == "delay":
-        return f"{float(value):.3f}".rstrip("0").rstrip(".")
+    if field_name in precision_map:
+        return f"{float(value):.{precision_map[field_name]}f}".rstrip("0").rstrip(".")
     raise KeyError(f"Unsupported numeric field: {field_name}")
 
 
@@ -432,6 +446,46 @@ def build_training_command(
             command.extend(["--epsilon-decay", str(algorithm_params["epsilon_decay"])])
         if "epsilon_min" in algorithm_params:
             command.extend(["--epsilon-min", str(algorithm_params["epsilon_min"])])
+
+        return command
+
+    if algorithm_name == "battery_adapt_q_learning":
+        command = [
+            sys.executable,
+            "scripts/train_q_battery_adapt.py",
+            "--map-name",
+            map_name,
+            "--stage1-episodes",
+            str(episodes),
+            "--stage2-episodes",
+            str(BATTERY_ADAPT_STAGE2_EPISODES),
+            "--seed",
+            str(seed),
+            "--print-every",
+            str(DEFAULT_PRINT_EVERY),
+        ]
+
+        if "stage1_learning_rate" in algorithm_params:
+            command.extend(["--stage1-learning-rate", str(algorithm_params["stage1_learning_rate"])])
+        if "stage1_discount_factor" in algorithm_params:
+            command.extend(["--stage1-discount-factor", str(algorithm_params["stage1_discount_factor"])])
+        if "stage1_epsilon_start" in algorithm_params:
+            command.extend(["--stage1-epsilon-start", str(algorithm_params["stage1_epsilon_start"])])
+        if "stage1_epsilon_decay" in algorithm_params:
+            command.extend(["--stage1-epsilon-decay", str(algorithm_params["stage1_epsilon_decay"])])
+        if "stage1_epsilon_min" in algorithm_params:
+            command.extend(["--stage1-epsilon-min", str(algorithm_params["stage1_epsilon_min"])])
+
+        if "stage2_learning_rate" in algorithm_params:
+            command.extend(["--stage2-learning-rate", str(algorithm_params["stage2_learning_rate"])])
+        if "stage2_discount_factor" in algorithm_params:
+            command.extend(["--stage2-discount-factor", str(algorithm_params["stage2_discount_factor"])])
+        if "stage2_epsilon_start" in algorithm_params:
+            command.extend(["--stage2-epsilon-start", str(algorithm_params["stage2_epsilon_start"])])
+        if "stage2_epsilon_decay" in algorithm_params:
+            command.extend(["--stage2-epsilon-decay", str(algorithm_params["stage2_epsilon_decay"])])
+        if "stage2_epsilon_min" in algorithm_params:
+            command.extend(["--stage2-epsilon-min", str(algorithm_params["stage2_epsilon_min"])])
 
         return command
 

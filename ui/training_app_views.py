@@ -527,7 +527,8 @@ def draw_menu(
 
     notes = [
         "Numeric fields accept direct typing. Click a field, edit the value, then press Enter or click elsewhere.",
-        "Recommended baseline for hard maps: 200000 episodes, gamma 0.99, epsilon_decay 0.99995.",
+        "Recommended baseline for hard maps: 200000 episodes, gamma 0.99, epsilon_decay 0.99999.",
+        "battery_adapt_q_learning adds a 50000-episode evaluation-battery finetune stage after the base run.",
         "random_baseline skips training and jumps directly to playback.",
     ]
     note_y = panel_rect.top + 455

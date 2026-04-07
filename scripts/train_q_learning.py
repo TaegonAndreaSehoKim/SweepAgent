@@ -91,6 +91,22 @@ def parse_args() -> argparse.Namespace:
         default=EPSILON_MIN,
         help="Minimum epsilon floor.",
     )
+    parser.add_argument(
+        "--battery-profile",
+        type=str,
+        choices=("training", "evaluation"),
+        default="training",
+        help="Which battery capacity profile to use for environment construction.",
+    )
+    parser.add_argument(
+        "--checkpoint-episodes",
+        type=int,
+        default=0,
+        help=(
+            "Optional episode count to embed in the checkpoint filename. "
+            "Defaults to --episodes."
+        ),
+    )
 
     parser.add_argument(
         "--init-checkpoint",
@@ -288,6 +304,10 @@ def save_checkpoint(
             "episodes": args.episodes,
             "seed": args.seed,
             "init_checkpoint": args.init_checkpoint,
+            "battery_profile": args.battery_profile,
+            "checkpoint_episodes": (
+                args.checkpoint_episodes if args.checkpoint_episodes > 0 else args.episodes
+            ),
             "hyperparameters": {
                 "learning_rate": args.learning_rate,
                 "discount_factor": args.discount_factor,
@@ -308,17 +328,18 @@ def save_checkpoint(
 
 def main() -> None:
     args = parse_args()
+    checkpoint_episodes = args.checkpoint_episodes if args.checkpoint_episodes > 0 else args.episodes
 
     env = build_env(
         map_name=args.map_name,
-        battery_profile="training",
+        battery_profile=args.battery_profile,
     )
     agent = build_agent(args)
 
     _, plot_dir = ensure_output_dirs()
     checkpoint_path = get_checkpoint_path(
         map_name=args.map_name,
-        episodes=args.episodes,
+        episodes=checkpoint_episodes,
         seed=args.seed,
     )
 
@@ -335,6 +356,8 @@ def main() -> None:
     print(f"epsilon_start: {args.epsilon_start}")
     print(f"epsilon_decay: {args.epsilon_decay}")
     print(f"epsilon_min: {args.epsilon_min}")
+    print(f"battery_profile: {args.battery_profile}")
+    print(f"checkpoint_episodes: {checkpoint_episodes}")
     print(f"init_checkpoint: {args.init_checkpoint if args.init_checkpoint else 'none'}")
     print(f"reset_epsilon: {args.reset_epsilon}")
     print(f"override_loaded_hparams: {args.override_loaded_hparams}")
