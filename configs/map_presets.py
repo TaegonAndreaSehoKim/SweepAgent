@@ -508,11 +508,22 @@ MAP_PRESETS = {
 
 
 for preset in MAP_PRESETS.values():
-    preset["battery_capacity"] = preset.get("battery_capacity_override")
-    if preset["battery_capacity"] is None:
-        preset["battery_capacity"] = _battery_capacity_with_margin(
-            preset["grid_map"],
-            min_margin=preset.get("battery_min_margin", 5),
-            margin_ratio=preset.get("battery_margin_ratio", 0.25),
-            margin_round_unit=preset.get("battery_margin_round_unit", 10),
-        )
+    recommended_battery_capacity = _battery_capacity_with_margin(
+        preset["grid_map"],
+        min_margin=preset.get("battery_min_margin", 5),
+        margin_ratio=preset.get("battery_margin_ratio", 0.25),
+        margin_round_unit=preset.get("battery_margin_round_unit", 10),
+    )
+    preset["battery_capacity_evaluation"] = preset.get(
+        "battery_capacity_evaluation_override",
+        recommended_battery_capacity,
+    )
+    preset["battery_capacity_training"] = preset.get(
+        "battery_capacity_training_override",
+        preset.get(
+            "battery_capacity_override",
+            preset["battery_capacity_evaluation"],
+        ),
+    )
+    # Keep the legacy key pointing at the stricter evaluation capacity.
+    preset["battery_capacity"] = preset["battery_capacity_evaluation"]

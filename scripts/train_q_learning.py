@@ -309,7 +309,10 @@ def save_checkpoint(
 def main() -> None:
     args = parse_args()
 
-    env = build_env(map_name=args.map_name)
+    env = build_env(
+        map_name=args.map_name,
+        battery_profile="training",
+    )
     agent = build_agent(args)
 
     _, plot_dir = ensure_output_dirs()

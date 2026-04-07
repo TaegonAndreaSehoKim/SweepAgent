@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 from agents.q_learning_agent import QLearningAgent
 from configs.map_presets import (
@@ -38,15 +38,23 @@ from env.grid_clean_env import GridCleanEnv
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def build_env(map_name: str = "default") -> GridCleanEnv:
+def build_env(
+    map_name: str = "default",
+    battery_profile: Literal["training", "evaluation"] = "evaluation",
+) -> GridCleanEnv:
     # Build one of the shared map presets.
     if map_name not in MAP_PRESETS:
         supported_maps = ", ".join(MAP_PRESETS.keys())
         raise ValueError(
             f"Unknown map_name='{map_name}'. Supported maps: {supported_maps}"
         )
+    if battery_profile not in {"training", "evaluation"}:
+        raise ValueError(
+            "battery_profile must be either 'training' or 'evaluation'."
+        )
 
     preset = MAP_PRESETS[map_name]
+    battery_capacity_key = f"battery_capacity_{battery_profile}"
 
     return GridCleanEnv(
         grid_map=preset["grid_map"],
@@ -56,7 +64,7 @@ def build_env(map_name: str = "default") -> GridCleanEnv:
         reward_revisit=REWARD_REVISIT,
         reward_invalid=REWARD_INVALID,
         reward_finish=REWARD_FINISH,
-        battery_capacity=preset.get("battery_capacity"),
+        battery_capacity=preset.get(battery_capacity_key, preset.get("battery_capacity")),
         low_battery_ratio=LOW_BATTERY_RATIO,
         reward_move_toward_charger=REWARD_MOVE_TOWARD_CHARGER,
         penalty_move_away_from_charger=PENALTY_MOVE_AWAY_FROM_CHARGER,
@@ -206,7 +214,10 @@ def load_or_train_q_agent(
             return agent
 
     print(f"No checkpoint found for map='{map_name}'. Training Q-learning agent...")
-    train_env = build_env(map_name=map_name)
+    train_env = build_env(
+        map_name=map_name,
+        battery_profile="training",
+    )
     agent = train_q_learning_agent(
         env=train_env,
         num_episodes=num_episodes,
