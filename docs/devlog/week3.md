@@ -238,3 +238,123 @@ The most natural next steps from here are:
 - decide whether `complex_charge_bastion` should keep its larger battery override or receive a stricter evaluation preset
 - compare multiple seeds systematically on the three hard maps
 - decide whether to keep investing in tabular Q-learning or move to a neural approximation method for better scaling
+
+---
+
+## 11. Training vs Evaluation Battery Profiles
+
+Once `complex_charge_bastion` became solvable with a larger training battery, it became important to separate "can the agent learn the route?" from "can the same policy survive a tighter battery budget?"
+
+### Change
+
+- split map battery settings into:
+  - `battery_capacity_training`
+  - `battery_capacity_evaluation`
+- kept training scripts on the training profile
+- kept playback and evaluation flows on the evaluation profile by default
+
+### Why this mattered
+
+This exposed an important gap:
+
+- some checkpoints that looked fully solved under training conditions still failed completely under evaluation conditions
+
+That made later tuning much more honest.
+
+---
+
+## 12. Batch Evaluation and Stability Checking
+
+After adding batch training, the next gap was evaluation consistency.
+
+### New workflow
+
+- added `scripts/evaluate_q_batch.py`
+- evaluates `map x seed x episode-count` checkpoint sets
+- writes detailed and summary CSV files under `outputs/logs/`
+
+### Why this mattered
+
+This moved the project away from single-run interpretation.
+It became easier to answer questions like:
+
+- does a recipe work reliably across seeds?
+- does it only solve under training battery settings?
+- does a checkpoint fail by `step_limit` looping or by `battery_depleted`?
+
+That evaluation pass confirmed that several hard-map checkpoints were still brittle once the stricter evaluation battery profile was applied.
+
+---
+
+## 13. Battery Adaptation Training
+
+Because some policies learned well under the easier training battery but collapsed under the tighter evaluation battery, a two-stage adaptation workflow was added.
+
+### New workflow
+
+- pretrain on the training battery profile
+- load that checkpoint
+- finetune on the evaluation battery profile
+- save the final checkpoint under the total combined episode count
+
+This was added as:
+
+- `scripts/train_q_battery_adapt.py`
+
+and wired into the UI.
+
+### UI updates
+
+- added `battery_adapt_q_learning` as a selectable training mode
+- kept high-precision numeric input for values like `0.999999`
+- later updated the UI again so both `Stage1 Episodes` and `Stage2 Episodes` can be edited directly
+
+### Why this mattered
+
+This created a cleaner way to test whether the policy could first learn the route with slack, then adapt to the tighter deployment condition.
+
+---
+
+## 14. What Battery Adaptation Actually Improved
+
+The battery-adapt workflow did not instantly solve `complex_charge_bastion`, but it did produce a meaningful behavioral change.
+
+### Observed pattern
+
+- pure `500000`-episode Q-learning often solved `bastion` under training battery settings
+- those same checkpoints often failed completely under evaluation battery settings
+- battery-adapt checkpoints still failed on evaluation in many runs, but some of them improved from:
+  - cleaning `0/3` dirty tiles
+  - to cleaning `1/3` or `2/3` dirty tiles before failure
+
+### Interpretation
+
+The two-stage process was meaningful, but not sufficient by itself.
+
+It improved transfer to the stricter battery setting, especially in runs where pure Q-learning showed zero progress under evaluation.
+But it also showed that `bastion` still needs better charger handoff and final-return planning under tight battery constraints.
+
+---
+
+## 15. Bastion-Specific Finding
+
+The latest `bastion` experiments clarified the real bottleneck.
+
+### What works
+
+- under the larger training battery, the agent can learn a full cleaning route
+- with good seeds, greedy evaluation reaches full success on the training profile
+
+### What still fails
+
+- under the evaluation battery, the agent often:
+  - cleans one or two dirty tiles
+  - reaches a charger correctly
+  - then fails to execute the next long-range transition safely
+
+### Practical conclusion
+
+The remaining problem is no longer just "find any route."
+It is "switch charger regions and time the return correctly under a much tighter battery budget."
+
+That is a much narrower and more useful failure mode than the earlier recharge-loop behavior.
