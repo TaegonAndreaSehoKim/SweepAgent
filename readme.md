@@ -239,7 +239,7 @@ python scripts/train_q_learning.py --map-name complex_charge_switchback --episod
 python scripts/train_q_battery_adapt.py --map-name complex_charge_bastion --stage1-episodes 200000 --stage2-episodes 50000 --seed 42
 ```
 
-This workflow first trains on the training battery profile, then fine-tunes on the evaluation battery profile with a smaller exploration schedule. The final checkpoint is saved under the total episode count.
+This workflow first trains on the training battery profile, then fine-tunes on the evaluation battery profile with a smaller exploration schedule. The UI exposes both stage lengths directly, and the final checkpoint is saved under the total episode count.
 
 ### Run batch training in parallel
 
