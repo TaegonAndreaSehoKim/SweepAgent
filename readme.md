@@ -233,6 +233,14 @@ SweepAgent/
 python scripts/train_q_learning.py --map-name complex_charge_switchback --episodes 200000 --seed 42
 ```
 
+### Train with battery-profile adaptation
+
+```bash
+python scripts/train_q_battery_adapt.py --map-name complex_charge_bastion --stage1-episodes 200000 --stage2-episodes 50000 --seed 42
+```
+
+This workflow first trains on the training battery profile, then fine-tunes on the evaluation battery profile with a smaller exploration schedule. The final checkpoint is saved under the total episode count.
+
 ### Run batch training in parallel
 
 ```bash
