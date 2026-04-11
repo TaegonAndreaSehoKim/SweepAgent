@@ -40,6 +40,7 @@ class GridCleanEnv:
         reward_invalid: float = -5,
         reward_finish: float = 50,
         battery_capacity: int | None = None,
+        initial_cleaned_positions: List[Tuple[int, int]] | None = None,
         first_recharge_reward: float = 0,
         successful_recharge_completion_bonus: float = 10,
         low_battery_ratio: float = 0.3,
@@ -50,6 +51,7 @@ class GridCleanEnv:
         battery_safety_reserve_min: int = 0,
         battery_safety_reserve_ratio: float = 0.0,
         low_battery_recharge_reward: float = 8,
+        penalty_recharge_without_progress: float = 0,
         reward_final_dirty_bonus: float = 30,
         penalty_battery_depleted: float = -30,
         penalty_enter_unrecoverable_state: float = 0,
@@ -93,15 +95,19 @@ class GridCleanEnv:
         }
         self.total_dirty_tiles = len(self.dirty_positions)
         self.safe_dirty_distance_cache: dict[tuple[int, int, int, int], int] = {}
+        self.initial_cleaned_mask = self._build_initial_cleaned_mask(
+            initial_cleaned_positions or []
+        )
 
         self.robot_pos: Tuple[int, int] = self.start_pos
-        self.cleaned_mask: int = 0
+        self.cleaned_mask: int = self.initial_cleaned_mask
         self.steps_taken: int = 0
         self.visited_positions: set[tuple[int, int]] = {self.start_pos}
 
         self.first_recharge_reward = first_recharge_reward
         self.successful_recharge_completion_bonus = successful_recharge_completion_bonus
         self.has_recharged_this_episode = False
+        self.cleaned_tiles_at_last_recharge = 0
 
         self.low_battery_ratio = low_battery_ratio
         self.reward_move_toward_charger = reward_move_toward_charger
@@ -112,6 +118,7 @@ class GridCleanEnv:
         self.battery_safety_reserve_ratio = battery_safety_reserve_ratio
 
         self.low_battery_recharge_reward = low_battery_recharge_reward
+        self.penalty_recharge_without_progress = penalty_recharge_without_progress
         self.reward_final_dirty_bonus = reward_final_dirty_bonus
         self.penalty_battery_depleted = penalty_battery_depleted
         self.penalty_enter_unrecoverable_state = penalty_enter_unrecoverable_state
@@ -143,6 +150,17 @@ class GridCleanEnv:
                 if self.grid[r][c] == "C":
                     charger_positions.append((r, c))
         return charger_positions
+
+    def _build_initial_cleaned_mask(
+        self,
+        initial_cleaned_positions: List[Tuple[int, int]],
+    ) -> int:
+        cleaned_mask = 0
+        for pos in initial_cleaned_positions:
+            if pos not in self.dirty_index_map:
+                continue
+            cleaned_mask |= 1 << self.dirty_index_map[pos]
+        return cleaned_mask
 
     def _build_distance_map(
         self,
@@ -320,10 +338,11 @@ class GridCleanEnv:
 
     def reset(self) -> Tuple[int, int, int, int]:
         self.robot_pos = self.start_pos
-        self.cleaned_mask = 0
+        self.cleaned_mask = self.initial_cleaned_mask
         self.steps_taken = 0
         self.battery_remaining = self.battery_capacity
         self.has_recharged_this_episode = False
+        self.cleaned_tiles_at_last_recharge = self._count_cleaned_tiles()
         self.visited_positions = {self.start_pos}
         return self._get_state()
 
@@ -376,6 +395,7 @@ class GridCleanEnv:
             self.robot_pos = (next_row, next_col)
             was_visited = (next_row, next_col) in self.visited_positions
             moved_onto_dirty = self._is_dirty(next_row, next_col)
+            charger_distance_after = -1
 
             if moved_onto_dirty:
                 self._clean_tile(next_row, next_col)
@@ -390,15 +410,15 @@ class GridCleanEnv:
                     reward += self.reward_move
 
             if emergency_mode and charger_distance_before != -1:
-                charger_distance_after = self._distance_to_nearest_charger(
-                    next_row,
-                    next_col,
-                )
+                charger_distance_after = self._distance_to_nearest_charger(next_row, next_col)
                 if charger_distance_after != -1:
                     if charger_distance_after < charger_distance_before:
                         reward += self.reward_move_toward_charger
                     elif charger_distance_after > charger_distance_before:
                         reward += self.penalty_move_away_from_charger
+
+            if charger_distance_after == -1 and self._should_consider_charger():
+                charger_distance_after = self._distance_to_nearest_charger(next_row, next_col)
 
             if (
                 safe_dirty_distance_before != -1
@@ -420,6 +440,9 @@ class GridCleanEnv:
                 if self.battery_remaining < self.battery_capacity:
                     battery_before_recharge = self.battery_remaining
                     recovered_amount = self.battery_capacity - battery_before_recharge
+                    cleaned_tiles_since_last_recharge = (
+                        self._count_cleaned_tiles() - self.cleaned_tiles_at_last_recharge
+                    )
                     low_battery_cutoff = max(
                         1,
                         int(self.battery_capacity * self.low_battery_ratio),
@@ -434,9 +457,15 @@ class GridCleanEnv:
 
                         if not self.has_recharged_this_episode:
                             reward += self.first_recharge_reward
+                    elif (
+                        cleaned_tiles_since_last_recharge == 0
+                        and not self._all_cleaned()
+                    ):
+                        reward += self.penalty_recharge_without_progress
 
                     self.battery_remaining = self.battery_capacity
                     self.has_recharged_this_episode = True
+                    self.cleaned_tiles_at_last_recharge = self._count_cleaned_tiles()
                     recharged = True
 
             self.visited_positions.add((next_row, next_col))
@@ -446,10 +475,11 @@ class GridCleanEnv:
                 and not self._all_cleaned()
                 and self.battery_remaining is not None
             ):
-                charger_distance_after = self._distance_to_nearest_charger(
-                    next_row,
-                    next_col,
-                )
+                if charger_distance_after == -1:
+                    charger_distance_after = self._distance_to_nearest_charger(
+                        next_row,
+                        next_col,
+                    )
                 entered_unrecoverable_state = (
                     battery_before_action is not None
                     and charger_distance_before != -1

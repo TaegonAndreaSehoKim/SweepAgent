@@ -92,11 +92,45 @@ def parse_args() -> argparse.Namespace:
         help="Minimum epsilon floor.",
     )
     parser.add_argument(
+        "--state-abstraction-mode",
+        type=str,
+        choices=("identity", "safety_margin"),
+        default="identity",
+        help=(
+            "Optional state abstraction applied inside the Q-table. "
+            "'identity' keeps the raw state, 'safety_margin' buckets battery "
+            "by battery-minus-nearest-charger-distance."
+        ),
+    )
+    parser.add_argument(
+        "--safety-margin-bucket-size",
+        type=int,
+        default=5,
+        help=(
+            "Bucket size used by the 'safety_margin' abstraction mode."
+        ),
+    )
+    parser.add_argument(
         "--battery-profile",
         type=str,
         choices=("training", "evaluation"),
         default="training",
         help="Which battery capacity profile to use for environment construction.",
+    )
+    parser.add_argument(
+        "--battery-capacity-override",
+        type=int,
+        default=0,
+        help="Optional explicit battery capacity override for the environment.",
+    )
+    parser.add_argument(
+        "--initial-cleaned-positions",
+        type=str,
+        default="",
+        help=(
+            "Optional semicolon-separated row,col positions to mark as already cleaned "
+            "at reset time. Example: '1,5;7,3'"
+        ),
     )
     parser.add_argument(
         "--checkpoint-episodes",
@@ -126,6 +160,21 @@ def parse_args() -> argparse.Namespace:
     )
 
     return parser.parse_args()
+
+
+def parse_initial_cleaned_positions(raw_value: str) -> list[tuple[int, int]]:
+    positions: list[tuple[int, int]] = []
+    if not raw_value.strip():
+        return positions
+
+    for token in raw_value.split(";"):
+        stripped = token.strip()
+        if not stripped:
+            continue
+        row_str, col_str = stripped.split(",", maxsplit=1)
+        positions.append((int(row_str), int(col_str)))
+
+    return positions
 
 
 def ensure_output_dirs() -> tuple[Path, Path]:
@@ -191,6 +240,9 @@ def build_fresh_agent(args: argparse.Namespace) -> QLearningAgent:
         epsilon_decay=args.epsilon_decay,
         epsilon_min=args.epsilon_min,
         seed=args.seed,
+        state_abstraction_mode=args.state_abstraction_mode,
+        abstraction_map_name=args.map_name,
+        safety_margin_bucket_size=args.safety_margin_bucket_size,
     )
 
 
@@ -305,6 +357,8 @@ def save_checkpoint(
             "seed": args.seed,
             "init_checkpoint": args.init_checkpoint,
             "battery_profile": args.battery_profile,
+            "battery_capacity_override": args.battery_capacity_override,
+            "initial_cleaned_positions": args.initial_cleaned_positions,
             "checkpoint_episodes": (
                 args.checkpoint_episodes if args.checkpoint_episodes > 0 else args.episodes
             ),
@@ -333,6 +387,12 @@ def main() -> None:
     env = build_env(
         map_name=args.map_name,
         battery_profile=args.battery_profile,
+        battery_capacity_override=(
+            args.battery_capacity_override if args.battery_capacity_override > 0 else None
+        ),
+        initial_cleaned_positions=parse_initial_cleaned_positions(
+            args.initial_cleaned_positions
+        ),
     )
     agent = build_agent(args)
 
@@ -356,7 +416,17 @@ def main() -> None:
     print(f"epsilon_start: {args.epsilon_start}")
     print(f"epsilon_decay: {args.epsilon_decay}")
     print(f"epsilon_min: {args.epsilon_min}")
+    print(f"state_abstraction_mode: {agent.state_abstraction_mode}")
+    if getattr(agent, "state_abstraction_mode", "identity") == "safety_margin":
+        print(
+            "safety_margin_bucket_size: "
+            f"{getattr(agent, 'safety_margin_bucket_size', args.safety_margin_bucket_size)}"
+        )
     print(f"battery_profile: {args.battery_profile}")
+    if args.battery_capacity_override > 0:
+        print(f"battery_capacity_override: {args.battery_capacity_override}")
+    if args.initial_cleaned_positions:
+        print(f"initial_cleaned_positions: {args.initial_cleaned_positions}")
     print(f"checkpoint_episodes: {checkpoint_episodes}")
     print(f"init_checkpoint: {args.init_checkpoint if args.init_checkpoint else 'none'}")
     print(f"reset_epsilon: {args.reset_epsilon}")

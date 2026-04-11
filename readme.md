@@ -233,6 +233,14 @@ SweepAgent/
 python scripts/train_q_learning.py --map-name complex_charge_switchback --episodes 200000 --seed 42
 ```
 
+### Train abstracted Q-learning
+
+```bash
+python scripts/train_q_learning.py --map-name complex_charge_bastion --episodes 200000 --seed 42 --state-abstraction-mode safety_margin --safety-margin-bucket-size 5
+```
+
+This mode keeps the raw environment unchanged and only changes the internal Q-table key. The battery feature is bucketed as `(battery_remaining - nearest_charger_distance)`, which is intended to generalize better across tight battery settings on the same map.
+
 ### Train with battery-profile adaptation
 
 ```bash

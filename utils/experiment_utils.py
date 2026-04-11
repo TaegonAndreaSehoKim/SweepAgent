@@ -19,6 +19,7 @@ from configs.map_presets import (
     PENALTY_ENTER_UNRECOVERABLE_STATE,
     PENALTY_MOVE_AWAY_FROM_CHARGER,
     PENALTY_MOVE_AWAY_FROM_SAFE_DIRTY,
+    PENALTY_RECHARGE_WITHOUT_PROGRESS,
     PRINT_EVERY,
     REWARD_CLEAN,
     REWARD_FINAL_DIRTY_BONUS,
@@ -41,6 +42,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def build_env(
     map_name: str = "default",
     battery_profile: Literal["training", "evaluation"] = "evaluation",
+    battery_capacity_override: int | None = None,
+    initial_cleaned_positions: list[tuple[int, int]] | None = None,
 ) -> GridCleanEnv:
     # Build one of the shared map presets.
     if map_name not in MAP_PRESETS:
@@ -55,16 +58,20 @@ def build_env(
 
     preset = MAP_PRESETS[map_name]
     battery_capacity_key = f"battery_capacity_{battery_profile}"
+    battery_capacity = preset.get(battery_capacity_key, preset.get("battery_capacity"))
+    if battery_capacity_override is not None:
+        battery_capacity = battery_capacity_override
 
     return GridCleanEnv(
         grid_map=preset["grid_map"],
         max_steps=preset["max_steps"],
+        initial_cleaned_positions=initial_cleaned_positions,
         reward_clean=REWARD_CLEAN,
         reward_move=REWARD_MOVE,
         reward_revisit=REWARD_REVISIT,
         reward_invalid=REWARD_INVALID,
         reward_finish=REWARD_FINISH,
-        battery_capacity=preset.get(battery_capacity_key, preset.get("battery_capacity")),
+        battery_capacity=battery_capacity,
         low_battery_ratio=LOW_BATTERY_RATIO,
         reward_move_toward_charger=REWARD_MOVE_TOWARD_CHARGER,
         penalty_move_away_from_charger=PENALTY_MOVE_AWAY_FROM_CHARGER,
@@ -73,6 +80,7 @@ def build_env(
         battery_safety_reserve_min=BATTERY_SAFETY_RESERVE_MIN,
         battery_safety_reserve_ratio=BATTERY_SAFETY_RESERVE_RATIO,
         low_battery_recharge_reward=LOW_BATTERY_RECHARGE_REWARD,
+        penalty_recharge_without_progress=PENALTY_RECHARGE_WITHOUT_PROGRESS,
         reward_final_dirty_bonus=REWARD_FINAL_DIRTY_BONUS,
         penalty_battery_depleted=PENALTY_BATTERY_DEPLETED,
         penalty_enter_unrecoverable_state=PENALTY_ENTER_UNRECOVERABLE_STATE,

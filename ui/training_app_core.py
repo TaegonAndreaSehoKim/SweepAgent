@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import queue
 import random
 import re
@@ -13,10 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from agents.q_learning_agent import QLearningAgent
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 MODEL_OPTIONS = [
     "q_learning",
+    "abstracted_q_learning",
     "battery_adapt_q_learning",
     "curriculum_q_learning",
     "random_baseline",
@@ -103,6 +105,13 @@ MENU_NUMERIC_FIELDS = (
 
 ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
     "q_learning": {
+        "learning_rate": 0.05,
+        "discount_factor": 0.99,
+        "epsilon_start": 1.00,
+        "epsilon_decay": 0.99999,
+        "epsilon_min": 0.20,
+    },
+    "abstracted_q_learning": {
         "learning_rate": 0.05,
         "discount_factor": 0.99,
         "epsilon_start": 1.00,
@@ -196,6 +205,7 @@ class TrainingRunner:
 class PreviewPolicy:
     def __init__(self, checkpoint_path: Path) -> None:
         self.checkpoint_path = checkpoint_path
+        self.agent: QLearningAgent | None = None
         self.q_table: dict[str, list[float]] = {}
         self.last_mtime: float | None = None
         self.last_reload_time = 0.0
@@ -218,38 +228,21 @@ class PreviewPolicy:
             return False
 
         try:
-            with self.checkpoint_path.open("r", encoding="utf-8") as f:
-                payload = json.load(f)
+            self.agent = QLearningAgent.load(self.checkpoint_path)
         except Exception:
             return False
 
-        raw_q_table = payload.get("q_table", {})
-        if not isinstance(raw_q_table, dict):
-            return False
-
-        parsed_q_table: dict[str, list[float]] = {}
-        for key, value in raw_q_table.items():
-            if isinstance(key, str) and isinstance(value, list):
-                parsed_q_table[key] = value
-
-        self.q_table = parsed_q_table
+        self.q_table = {
+            ",".join(str(value) for value in state): list(q_values)
+            for state, q_values in self.agent.q_table.items()
+        }
         self.last_mtime = mtime
         return True
 
     def get_greedy_action(self, state: tuple[int, int, int, int], action_count: int) -> int:
-        state_key = str(tuple(state))
-        q_values = self.q_table.get(state_key)
-
-        if not q_values or len(q_values) != action_count:
+        if self.agent is None:
             return random.randrange(action_count)
-
-        best_action = 0
-        best_value = q_values[0]
-        for idx in range(1, len(q_values)):
-            if q_values[idx] > best_value:
-                best_value = q_values[idx]
-                best_action = idx
-        return best_action
+        return self.agent.get_policy_action(state)
 
 
 def get_default_algorithm_params(algorithm_name: str) -> dict[str, float]:
@@ -460,6 +453,37 @@ def build_training_command(
             str(seed),
             "--print-every",
             str(DEFAULT_PRINT_EVERY),
+        ]
+
+        if "learning_rate" in algorithm_params:
+            command.extend(["--learning-rate", str(algorithm_params["learning_rate"])])
+        if "discount_factor" in algorithm_params:
+            command.extend(["--discount-factor", str(algorithm_params["discount_factor"])])
+        if "epsilon_start" in algorithm_params:
+            command.extend(["--epsilon-start", str(algorithm_params["epsilon_start"])])
+        if "epsilon_decay" in algorithm_params:
+            command.extend(["--epsilon-decay", str(algorithm_params["epsilon_decay"])])
+        if "epsilon_min" in algorithm_params:
+            command.extend(["--epsilon-min", str(algorithm_params["epsilon_min"])])
+
+        return command
+
+    if algorithm_name == "abstracted_q_learning":
+        command = [
+            sys.executable,
+            "scripts/train_q_learning.py",
+            "--map-name",
+            map_name,
+            "--episodes",
+            str(episodes),
+            "--seed",
+            str(seed),
+            "--print-every",
+            str(DEFAULT_PRINT_EVERY),
+            "--state-abstraction-mode",
+            "safety_margin",
+            "--safety-margin-bucket-size",
+            "5",
         ]
 
         if "learning_rate" in algorithm_params:
