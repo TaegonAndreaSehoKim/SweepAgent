@@ -358,3 +358,205 @@ The remaining problem is no longer just "find any route."
 It is "switch charger regions and time the return correctly under a much tighter battery budget."
 
 That is a much narrower and more useful failure mode than the earlier recharge-loop behavior.
+
+---
+
+## 16. Moving Away from Map-Specific Reward Tuning
+
+At this point, further `bastion` tuning started to feel too close to hardcoding.
+
+### Practical issue
+
+- reward shaping and curriculum tricks were still improving behavior
+- but each additional change looked more like a `bastion` patch than a generally better RL setup
+
+### Decision
+
+The project shifted from "more map-specific shaping" to "better internal state representation."
+
+The environment state itself was left unchanged:
+
+- `(row, col, cleaned_mask, battery_value)`
+
+Instead, the Q-learning agent was extended so it could optionally abstract that raw state before using it as a Q-table key.
+
+This preserved:
+
+- environment compatibility
+- checkpoint loading behavior
+- existing evaluation and playback flows
+
+while still allowing representation experiments.
+
+---
+
+## 17. Abstracted Q-Learning
+
+The first representation upgrade introduced optional abstraction modes inside `QLearningAgent`.
+
+### Modes added
+
+- `identity`
+- `safety_margin`
+- later, `charger_context`
+
+### `safety_margin`
+
+This mode replaced the raw battery value in the Q-table key with a bucketed form of:
+
+- `battery_remaining - nearest_charger_distance`
+
+### Why this mattered
+
+The raw battery value caused a large distribution shift between training and evaluation battery profiles.
+The hope was that a charger-relative battery feature would transfer better.
+
+### Result
+
+On `complex_charge_bastion`, this was a real improvement.
+
+With the same `200000`-episode stage-1 training setup:
+
+- plain tabular Q-learning still failed even on the training battery in some runs
+- abstracted Q-learning reached full greedy success on the training battery profile
+
+So the abstraction was useful.
+It just was not enough to solve the tighter evaluation profile by itself.
+
+---
+
+## 18. Abstracted Battery Adaptation
+
+After `safety_margin` abstraction showed a much stronger base policy, it was combined with battery-profile adaptation.
+
+### Workflow
+
+- stage 1: train on the training battery profile
+- stage 2: finetune the same checkpoint on the evaluation battery profile
+
+This required updating the battery-adapt script so abstraction flags were passed through both stages.
+
+### Main finding
+
+The combination was meaningful.
+
+It moved `complex_charge_bastion` evaluation behavior from:
+
+- `0/3 cleaned`
+
+to:
+
+- stable `2/3 cleaned`
+
+depending on the adaptation settings.
+
+### Tradeoff discovered
+
+The main tuning problem became a balance between:
+
+- preserving the strong stage-1 policy
+- adapting enough to help the tighter evaluation battery
+
+Three patterns showed up clearly:
+
+- aggressive stage-2 finetuning improved evaluation behavior but could destroy training-profile success
+- conservative stage-2 finetuning preserved training success but improved evaluation less
+- a middle schedule preserved training success in some seeds while still reaching evaluation `2/3 cleaned`
+
+That was the best tabular compromise found in this phase.
+
+---
+
+## 19. Seed Sweep on the Best Middle Adaptation Recipe
+
+To check whether the `2/3` result was a lucky run, the best middle schedule was repeated across multiple seeds.
+
+### Recipe
+
+- abstracted Q-learning
+- `stage1 = 200000`
+- `stage2 = 200000`
+- `stage2_learning_rate = 0.015`
+- `stage2_epsilon_start = 0.15`
+- `stage2_epsilon_decay = 0.999985`
+- `stage2_epsilon_min = 0.04`
+
+### Result
+
+Across the tested seeds, evaluation behavior converged to almost the same outcome:
+
+- `complex_charge_bastion`
+- evaluation profile
+- greedy policy
+- `2/3 cleaned`
+- final failure by `battery_depleted`
+
+This was important because it showed that the project was no longer fighting random instability.
+It was hitting a consistent representational or planning limit.
+
+---
+
+## 20. Richer Charger-Context Abstraction
+
+Because `safety_margin` alone still plateaued, a richer abstraction mode was added.
+
+### `charger_context` mode
+
+This mode combined:
+
+- battery safety margin
+- current nearest charger region
+- anchor charger region for the nearest remaining dirty tile
+- remaining dirty-count bucket
+- count of currently battery-safe remaining dirties
+
+### Goal
+
+The goal was to expose the exact kind of information that seemed to matter in the final `bastion` failure:
+
+- charger-region handoff
+- whether a remaining dirty tile was still realistically reachable
+- whether the policy should continue pushing outward or prepare to return
+
+### Result
+
+The richer abstraction worked technically and could still learn strong stage-1 policies.
+However, it did not break the main plateau.
+
+With adaptation, it still tended to land at:
+
+- training success sometimes preserved, sometimes degraded
+- evaluation behavior still around `2/3 cleaned`
+
+So the extra context was not enough to solve the final transition.
+
+---
+
+## 21. New Practical Conclusion
+
+By the end of this phase, the project had a much clearer picture of what tabular Q-learning can and cannot do here.
+
+### What tabular Q-learning can now do
+
+- solve `complex_charge_labyrinth`
+- solve `complex_charge_switchback`
+- solve `complex_charge_bastion` under the training battery profile
+- adapt `complex_charge_bastion` evaluation behavior from total failure to stable partial success
+
+### What it still cannot do reliably
+
+- finish the last `complex_charge_bastion` dirty tile under the stricter evaluation battery profile
+
+### Why this matters
+
+This is no longer a vague "the RL did not learn" problem.
+It is now a much sharper conclusion:
+
+- reward design is no longer the main blocker
+- seed instability is no longer the main blocker
+- longer stage-2 adaptation is no longer enough by itself
+- richer tabular abstraction still does not close the final gap
+
+That makes the next decision much cleaner.
+
+The most defensible next step is likely to move beyond pure tabular Q-learning and test a function-approximation method.

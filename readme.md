@@ -131,6 +131,15 @@ Recent charge-aware reward changes also added:
 
 These changes were introduced to fix failure modes on the hardest maps, especially charger loops and late battery-depletion mistakes.
 
+Recent representation work also added optional internal state abstraction modes for tabular Q-learning:
+
+- `identity`
+- `safety_margin`
+- `charger_context`
+
+These modes do not change the environment state itself.
+They only change how the Q-table keys are formed inside the agent.
+
 ## Current Training Defaults
 
 The shared Q-learning defaults are now tuned for harder charge-aware runs:
@@ -162,12 +171,11 @@ The recent tuning cycle materially improved the hardest maps.
 
 Current read:
 
-- `complex_charge_labyrinth` is solved under the latest direct-training setup
+- `complex_charge_labyrinth` is solved under both training and evaluation battery settings
 - `complex_charge_switchback` is solved after safety-aware reward shaping
-- `complex_charge_bastion` is solved with stronger safety-aware shaping, slower epsilon decay, and a larger battery override during training
+- `complex_charge_bastion` is solved on the training battery profile with abstracted Q-learning, but still plateaus at `2/3` cleaned on the stricter evaluation profile
 
-This project is now past the stage where all three newest maps are unresolved.
-The current direction is improving training efficiency and documenting the learned behavior more clearly.
+This means the project has working hard-map training recipes, but `bastion` still exposes a real generalization limit for the current tabular approach.
 
 ## Performance Notes
 
@@ -236,18 +244,30 @@ python scripts/train_q_learning.py --map-name complex_charge_switchback --episod
 ### Train abstracted Q-learning
 
 ```bash
-python scripts/train_q_learning.py --map-name complex_charge_bastion --episodes 200000 --seed 42 --state-abstraction-mode safety_margin --safety-margin-bucket-size 5
+python scripts/train_q_learning.py --map-name complex_charge_bastion --episodes 200000 --seed 42 --state-abstraction-mode charger_context --safety-margin-bucket-size 5
 ```
 
-This mode keeps the raw environment unchanged and only changes the internal Q-table key. The battery feature is bucketed as `(battery_remaining - nearest_charger_distance)`, which is intended to generalize better across tight battery settings on the same map.
+This mode keeps the raw environment unchanged and only changes the internal Q-table key. The current abstraction options are:
+
+- `safety_margin`: buckets battery as `(battery_remaining - nearest_charger_distance)`
+- `charger_context`: extends that idea with charger-region and remaining-dirty context
 
 ### Train with battery-profile adaptation
 
 ```bash
-python scripts/train_q_battery_adapt.py --map-name complex_charge_bastion --stage1-episodes 200000 --stage2-episodes 50000 --seed 42
+python scripts/train_q_battery_adapt.py --map-name complex_charge_bastion --stage1-episodes 200000 --stage2-episodes 150000 --seed 42 --stage2-learning-rate 0.015 --stage2-epsilon-start 0.15 --stage2-epsilon-decay 0.999985 --stage2-epsilon-min 0.04 --state-abstraction-mode safety_margin
 ```
 
-This workflow first trains on the training battery profile, then fine-tunes on the evaluation battery profile with a smaller exploration schedule. The UI exposes both stage lengths directly, and the final checkpoint is saved under the total episode count.
+This workflow first trains on the training battery profile, then fine-tunes on the evaluation battery profile with a smaller exploration schedule. The UI exposes both stage lengths directly, and the final checkpoint is saved under the total combined episode count.
+
+For `complex_charge_bastion`, the best recent tabular result used:
+
+- abstracted Q-learning
+- `stage1 = 200000`
+- `stage2 = 150000`
+- conservative-but-not-too-conservative stage2 exploration
+
+That recipe preserved training-profile success and raised evaluation behavior to a stable `2/3` cleaned, but it still did not reach full evaluation success.
 
 ### Run batch training in parallel
 
@@ -297,3 +317,5 @@ The current improvement areas are:
 - comparing training efficiency across seeds
 - deciding how much of the current success comes from reward design vs battery slack
 - documenting hard-map training recipes more clearly
+- deciding whether `complex_charge_bastion` has reached the practical limit of tabular Q-learning
+- evaluating whether the next step should be a neural approximation method rather than more tabular tuning
