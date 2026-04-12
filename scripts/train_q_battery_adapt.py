@@ -58,6 +58,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage2-epsilon-start", type=float, default=0.30)
     parser.add_argument("--stage2-epsilon-decay", type=float, default=0.99998)
     parser.add_argument("--stage2-epsilon-min", type=float, default=0.08)
+    parser.add_argument(
+        "--state-abstraction-mode",
+        type=str,
+        choices=("identity", "safety_margin"),
+        default="identity",
+        help="Optional abstraction mode passed through to both training stages.",
+    )
+    parser.add_argument(
+        "--safety-margin-bucket-size",
+        type=int,
+        default=5,
+        help="Bucket size used by the safety_margin abstraction mode.",
+    )
     return parser.parse_args()
 
 
@@ -112,6 +125,10 @@ def main() -> None:
         str(args.stage1_epsilon_decay),
         "--epsilon-min",
         str(args.stage1_epsilon_min),
+        "--state-abstraction-mode",
+        args.state_abstraction_mode,
+        "--safety-margin-bucket-size",
+        str(args.safety_margin_bucket_size),
     ]
 
     stage2_command = [
@@ -139,6 +156,10 @@ def main() -> None:
         str(args.stage2_epsilon_decay),
         "--epsilon-min",
         str(args.stage2_epsilon_min),
+        "--state-abstraction-mode",
+        args.state_abstraction_mode,
+        "--safety-margin-bucket-size",
+        str(args.safety_margin_bucket_size),
         "--init-checkpoint",
         str(stage1_checkpoint),
         "--reset-epsilon",
@@ -151,6 +172,9 @@ def main() -> None:
     print(f"stage2_episodes: {args.stage2_episodes}")
     print(f"final_checkpoint_episodes: {final_checkpoint_episodes}")
     print(f"seed: {args.seed}")
+    print(f"state_abstraction_mode: {args.state_abstraction_mode}")
+    if args.state_abstraction_mode == "safety_margin":
+        print(f"safety_margin_bucket_size: {args.safety_margin_bucket_size}")
     print(f"stage1_checkpoint: {stage1_checkpoint}")
     print(f"final_checkpoint: {final_checkpoint}")
 
