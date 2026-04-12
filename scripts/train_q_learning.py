@@ -94,12 +94,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--state-abstraction-mode",
         type=str,
-        choices=("identity", "safety_margin"),
+        choices=("identity", "safety_margin", "charger_context"),
         default="identity",
         help=(
             "Optional state abstraction applied inside the Q-table. "
             "'identity' keeps the raw state, 'safety_margin' buckets battery "
-            "by battery-minus-nearest-charger-distance."
+            "by battery-minus-nearest-charger-distance, and 'charger_context' "
+            "adds charger-region and remaining-dirty context."
         ),
     )
     parser.add_argument(

@@ -548,7 +548,7 @@ def draw_menu(
     notes = [
         "Numeric fields accept direct typing. Click a field, edit the value, then press Enter or click elsewhere.",
         "Recommended baseline for hard maps: 200000 episodes, gamma 0.99, epsilon_decay 0.99999.",
-        "abstracted_q_learning buckets battery by charger safety margin inside the Q-table while keeping the env unchanged.",
+        "abstracted_q_learning adds charger-region and remaining-dirty context inside the Q-table while keeping the env unchanged.",
         "battery_adapt_q_learning uses Stage1 as training-battery pretrain and Stage2 as evaluation-battery finetune.",
         "random_baseline skips training and jumps directly to playback.",
     ]

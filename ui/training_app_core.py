@@ -481,7 +481,7 @@ def build_training_command(
             "--print-every",
             str(DEFAULT_PRINT_EVERY),
             "--state-abstraction-mode",
-            "safety_margin",
+            "charger_context",
             "--safety-margin-bucket-size",
             "5",
         ]

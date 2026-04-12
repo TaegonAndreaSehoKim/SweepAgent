@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--state-abstraction-mode",
         type=str,
-        choices=("identity", "safety_margin"),
+        choices=("identity", "safety_margin", "charger_context"),
         default="identity",
         help="Optional abstraction mode passed through to both training stages.",
     )

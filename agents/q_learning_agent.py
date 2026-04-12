@@ -13,7 +13,7 @@ State = Tuple[int, int, int, int]
 
 
 class QLearningAgent:
-    _SUPPORTED_ABSTRACTION_MODES = {"identity", "safety_margin"}
+    _SUPPORTED_ABSTRACTION_MODES = {"identity", "safety_margin", "charger_context"}
     _charger_distance_cache: Dict[str, List[List[int]]] = {}
 
     def __init__(
@@ -55,6 +55,12 @@ class QLearningAgent:
         self.abstraction_map_name = abstraction_map_name
         self.safety_margin_bucket_size = max(1, int(safety_margin_bucket_size))
         self._charger_distance_map = self._get_charger_distance_map(abstraction_map_name)
+        self._map_grid = MAP_PRESETS.get(abstraction_map_name, {}).get("grid_map", [])
+        self._charger_positions = self._find_positions("C")
+        self._dirty_positions = self._find_positions("D")
+        self._charger_distance_maps = self._build_distance_maps(self._charger_positions)
+        self._dirty_distance_maps = self._build_distance_maps(self._dirty_positions)
+        self._dirty_anchor_charger_ids = self._build_dirty_anchor_charger_ids()
 
         # Use a local RNG so runs can be reproduced with the same seed.
         self.rng = random.Random(seed)
@@ -103,6 +109,86 @@ class QLearningAgent:
         cls._charger_distance_cache[map_name] = distance_map
         return distance_map
 
+    def _find_positions(self, symbol: str) -> List[tuple[int, int]]:
+        positions: List[tuple[int, int]] = []
+        for row, row_text in enumerate(self._map_grid):
+            for col, cell in enumerate(row_text):
+                if cell == symbol:
+                    positions.append((row, col))
+        return positions
+
+    def _build_distance_map(
+        self,
+        source_positions: List[tuple[int, int]],
+    ) -> List[List[int]]:
+        if not self._map_grid:
+            return []
+
+        rows = len(self._map_grid)
+        cols = len(self._map_grid[0]) if rows else 0
+        distance_map = [[-1 for _ in range(cols)] for _ in range(rows)]
+        queue: deque[tuple[int, int]] = deque()
+
+        for row, col in source_positions:
+            distance_map[row][col] = 0
+            queue.append((row, col))
+
+        while queue:
+            row, col = queue.popleft()
+
+            for delta_row, delta_col in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                next_row = row + delta_row
+                next_col = col + delta_col
+
+                if not (0 <= next_row < rows and 0 <= next_col < cols):
+                    continue
+                if self._map_grid[next_row][next_col] == "#":
+                    continue
+                if distance_map[next_row][next_col] != -1:
+                    continue
+
+                distance_map[next_row][next_col] = distance_map[row][col] + 1
+                queue.append((next_row, next_col))
+
+        return distance_map
+
+    def _build_distance_maps(
+        self,
+        positions: List[tuple[int, int]],
+    ) -> List[List[List[int]]]:
+        return [self._build_distance_map([position]) for position in positions]
+
+    def _distance_from_map(
+        self,
+        distance_map: List[List[int]],
+        row: int,
+        col: int,
+    ) -> int:
+        if not distance_map:
+            return -1
+        if row < 0 or col < 0 or row >= len(distance_map) or col >= len(distance_map[row]):
+            return -1
+        return distance_map[row][col]
+
+    def _build_dirty_anchor_charger_ids(self) -> List[int]:
+        anchor_ids: List[int] = []
+
+        for dirty_row, dirty_col in self._dirty_positions:
+            best_charger_id = 0
+            best_distance = -1
+
+            for charger_id, charger_map in enumerate(self._charger_distance_maps):
+                distance = self._distance_from_map(charger_map, dirty_row, dirty_col)
+                if distance == -1:
+                    continue
+                if best_distance == -1 or distance < best_distance:
+                    best_distance = distance
+                    best_charger_id = charger_id
+
+            anchor_ids.append(best_charger_id)
+
+        return anchor_ids
+
     def _encode_safety_margin_feature(
         self,
         row: int,
@@ -128,6 +214,133 @@ class QLearningAgent:
         safety_margin = battery_value - charger_distance
         return safety_margin // self.safety_margin_bucket_size
 
+    def _nearest_charger_id(self, row: int, col: int) -> int:
+        best_charger_id = -1
+        best_distance = -1
+
+        for charger_id, charger_map in enumerate(self._charger_distance_maps):
+            distance = self._distance_from_map(charger_map, row, col)
+            if distance == -1:
+                continue
+            if best_distance == -1 or distance < best_distance:
+                best_distance = distance
+                best_charger_id = charger_id
+
+        return best_charger_id
+
+    def _remaining_dirty_indices(self, cleaned_mask: int) -> List[int]:
+        return [
+            dirty_idx
+            for dirty_idx in range(len(self._dirty_positions))
+            if ((cleaned_mask >> dirty_idx) & 1) == 0
+        ]
+
+    def _nearest_remaining_dirty_index(
+        self,
+        row: int,
+        col: int,
+        cleaned_mask: int,
+    ) -> int:
+        best_dirty_idx = -1
+        best_distance = -1
+
+        for dirty_idx in self._remaining_dirty_indices(cleaned_mask):
+            distance = self._distance_from_map(
+                self._dirty_distance_maps[dirty_idx],
+                row,
+                col,
+            )
+            if distance == -1:
+                continue
+            if best_distance == -1 or distance < best_distance:
+                best_distance = distance
+                best_dirty_idx = dirty_idx
+
+        return best_dirty_idx
+
+    def _count_safe_remaining_dirties(
+        self,
+        row: int,
+        col: int,
+        cleaned_mask: int,
+        battery_value: int,
+    ) -> int:
+        if battery_value < 0:
+            return 0
+
+        safe_count = 0
+        for dirty_idx in self._remaining_dirty_indices(cleaned_mask):
+            distance_to_dirty = self._distance_from_map(
+                self._dirty_distance_maps[dirty_idx],
+                row,
+                col,
+            )
+            dirty_row, dirty_col = self._dirty_positions[dirty_idx]
+            distance_dirty_to_charger = self._distance_to_nearest_charger_from_position(
+                dirty_row,
+                dirty_col,
+            )
+
+            if distance_to_dirty == -1 or distance_dirty_to_charger == -1:
+                continue
+            if distance_to_dirty + distance_dirty_to_charger <= battery_value:
+                safe_count += 1
+
+        return safe_count
+
+    def _distance_to_nearest_charger_from_position(self, row: int, col: int) -> int:
+        best_distance = -1
+        for charger_map in self._charger_distance_maps:
+            distance = self._distance_from_map(charger_map, row, col)
+            if distance == -1:
+                continue
+            if best_distance == -1 or distance < best_distance:
+                best_distance = distance
+        return best_distance
+
+    def _encode_charger_context_feature(
+        self,
+        row: int,
+        col: int,
+        cleaned_mask: int,
+        battery_value: int,
+    ) -> int:
+        if not self._map_grid:
+            return self._encode_safety_margin_feature(row, col, battery_value)
+
+        charger_count = max(1, len(self._charger_positions))
+        none_region_id = charger_count
+
+        current_region_id = self._nearest_charger_id(row, col)
+        if current_region_id == -1:
+            current_region_id = none_region_id
+
+        nearest_dirty_idx = self._nearest_remaining_dirty_index(row, col, cleaned_mask)
+        target_region_id = none_region_id
+        if nearest_dirty_idx != -1 and nearest_dirty_idx < len(self._dirty_anchor_charger_ids):
+            target_region_id = self._dirty_anchor_charger_ids[nearest_dirty_idx]
+
+        remaining_count = len(self._remaining_dirty_indices(cleaned_mask))
+        remaining_bucket = min(remaining_count, min(7, len(self._dirty_positions)))
+
+        safe_dirty_count = self._count_safe_remaining_dirties(
+            row,
+            col,
+            cleaned_mask,
+            battery_value,
+        )
+        safe_dirty_bucket = min(safe_dirty_count, 3)
+
+        margin_bucket = self._encode_safety_margin_feature(row, col, battery_value)
+        shifted_margin_bucket = max(0, min(31, margin_bucket + 8))
+
+        encoded_feature = shifted_margin_bucket
+        encoded_feature = encoded_feature * 4 + safe_dirty_bucket
+        encoded_feature = encoded_feature * (min(7, len(self._dirty_positions)) + 1) + remaining_bucket
+        encoded_feature = encoded_feature * (charger_count + 1) + target_region_id
+        encoded_feature = encoded_feature * (charger_count + 1) + current_region_id
+        return encoded_feature
+
     def _encode_state(self, state: State) -> State:
         if self.state_abstraction_mode == "identity":
             return state
@@ -140,6 +353,19 @@ class QLearningAgent:
                 col,
                 cleaned_mask,
                 self._encode_safety_margin_feature(row, col, battery_value),
+            )
+
+        if self.state_abstraction_mode == "charger_context":
+            return (
+                row,
+                col,
+                cleaned_mask,
+                self._encode_charger_context_feature(
+                    row,
+                    col,
+                    cleaned_mask,
+                    battery_value,
+                ),
             )
 
         raise ValueError(
