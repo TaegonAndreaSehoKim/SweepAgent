@@ -10,7 +10,9 @@ SweepAgent currently includes:
 - a custom `GridCleanEnv`
 - a random baseline agent
 - a tabular `QLearningAgent`
+- a PyTorch-based `DQNAgent`
 - JSON checkpoint save/load support
+- DQN `.pt` checkpoint save/load support
 - shared experiment builders and checkpoint helpers
 - benchmark, evaluation, comparison, and rendering scripts
 - a pygame training/playback UI
@@ -48,8 +50,10 @@ Implemented agents:
 
 - `RandomAgent`
 - `QLearningAgent`
+- `DQNAgent`
 
 Checkpoints are reused across training, evaluation, comparison, GIF rendering, and UI playback.
+The DQN workflow is currently script-driven and is not yet integrated into the pygame UI.
 
 ### Training UI
 
@@ -155,7 +159,7 @@ Harder maps may still use longer runs such as `500000` episodes.
 
 ## Checkpoints
 
-Checkpoint format:
+Q-learning checkpoint format:
 
 `q_learning_agent_<map_name>_ep_<episodes>_seed_<seed>.json`
 
@@ -164,6 +168,15 @@ Examples:
 - `q_learning_agent_complex_charge_labyrinth_ep_200000_seed_42.json`
 - `q_learning_agent_complex_charge_switchback_ep_200000_seed_42.json`
 - `q_learning_agent_complex_charge_bastion_ep_500000_seed_42.json`
+
+DQN checkpoint format:
+
+`dqn_agent_<map_name>_ep_<episodes>_seed_<seed>.pt`
+
+Examples:
+
+- `dqn_agent_complex_charge_bastion_ep_5000_seed_416.pt`
+- `dqn_agent_complex_charge_bastion_ep_5000_seed_417.pt`
 
 ## Recent Results
 
@@ -177,20 +190,43 @@ Current read:
 
 This means the project has working hard-map training recipes, but `bastion` still exposes a real generalization limit for the current tabular approach.
 
-## Performance Notes
+Recent DQN experiments changed that picture slightly:
 
-Recent performance work focused on CPU-side optimization rather than GPU usage.
+- a naive DQN reached `0/3` cleaned on `complex_charge_bastion`
+- action masking removed invalid wall-action loops
+- guided exploration made dirty-reaching trajectories appear in replay memory
+- target dirty/charger context features improved greedy evaluation from `1/3` cleaned to `2/3` cleaned
 
-That is intentional:
+The best current DQN result on `complex_charge_bastion` also plateaus at `2/3` cleaned under the evaluation battery profile.
+That mirrors the best tabular result, but reaches it through a different mechanism.
+
+## Performance And CUDA Notes
+
+The tabular Q-learning path is still CPU-bound.
+
+For Q-learning, GPU acceleration is not useful because:
 
 - the current algorithm is tabular Q-learning, not a neural-network method
 - most of the cost is Python environment stepping and Q-table updates
-- GPU acceleration is not useful without changing the learning algorithm itself
 
 Recent optimizations include:
 
 - caching safe-dirty lookup results
 - a leaner `step_training()` path that avoids building full `info` payloads on every training step
+
+The DQN path uses PyTorch and can use CUDA when a CUDA-enabled PyTorch wheel is installed.
+On the current development machine, CUDA was verified with:
+
+- NVIDIA GeForce RTX 3080 Ti
+- PyTorch `2.11.0+cu128`
+- `torch.cuda.is_available() == True`
+
+For a CUDA-capable environment, install the normal requirements first, then install the CUDA-specific PyTorch wheel:
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-cuda.txt
+```
 
 ## Project Structure
 
@@ -198,6 +234,7 @@ Recent optimizations include:
 SweepAgent/
 |-- README.md
 |-- agents/
+|   |-- dqn_agent.py
 |   |-- q_learning_agent.py
 |   `-- random_agent.py
 |-- configs/
@@ -206,7 +243,8 @@ SweepAgent/
 |   `-- devlog/
 |       |-- week1.md
 |       |-- week2.md
-|       `-- week3.md
+|       |-- week3.md
+|       `-- week4.md
 |-- env/
 |   `-- grid_clean_env.py
 |-- outputs/
@@ -221,8 +259,11 @@ SweepAgent/
 |   |-- render_comparison_gif.py
 |   |-- render_policy_gif.py
 |   |-- run_training_app.py
+|   |-- train_dqn.py
 |   |-- train_q_curriculum.py
 |   `-- train_q_learning.py
+|-- tests/
+|   `-- test_dqn_agent.py
 |-- ui/
 |   |-- training_app_core.py
 |   |-- training_app_handlers.py
@@ -269,6 +310,24 @@ For `complex_charge_bastion`, the best recent tabular result used:
 
 That recipe preserved training-profile success and raised evaluation behavior to a stable `2/3` cleaned, but it still did not reach full evaluation success.
 
+### Train DQN
+
+```bash
+python scripts/train_dqn.py --map-name complex_charge_bastion --battery-profile evaluation --episodes 5000 --seed 417 --print-every 500 --learning-rate 0.0005 --epsilon-decay 0.99995 --epsilon-min 0.10 --learning-starts 1000 --batch-size 128 --replay-capacity 100000 --train-every 8 --target-update-interval 1000 --hidden-size 256 --guided-exploration-ratio 0.6 --eval-episodes 20
+```
+
+The DQN implementation currently includes:
+
+- replay buffer training
+- Double-DQN target selection
+- hard target-network updates
+- action masking for wall moves
+- optional guided exploration
+- map-derived state features for dirty, charger, battery, and route context
+
+The best current DQN result on `complex_charge_bastion` reached `2/3` cleaned under the evaluation battery profile.
+Higher guided exploration ratios produced more dirty-reaching training trajectories but did not improve greedy evaluation, so the current best setting keeps guidance at `0.6`.
+
 ### Run batch training in parallel
 
 ```bash
@@ -313,9 +372,8 @@ python scripts/train_q_curriculum.py --stage1-map charge_maze_medium --stage2-ma
 
 The current improvement areas are:
 
-- reducing wall-clock training time on hard maps
-- comparing training efficiency across seeds
-- deciding how much of the current success comes from reward design vs battery slack
-- documenting hard-map training recipes more clearly
-- deciding whether `complex_charge_bastion` has reached the practical limit of tabular Q-learning
-- evaluating whether the next step should be a neural approximation method rather than more tabular tuning
+- improving the final `complex_charge_bastion` transition from `2/3` cleaned to full success
+- adding route-via-charger context for the last remaining dirty tile
+- comparing DQN behavior across seeds instead of relying on one promising run
+- deciding whether DQN should be integrated into the pygame UI
+- keeping generated checkpoints, plots, logs, and GIFs out of version control
