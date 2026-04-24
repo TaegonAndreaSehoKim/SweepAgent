@@ -3,6 +3,12 @@ from __future__ import annotations
 import torch
 
 from agents.dqn_agent import DQNAgent, DQNConfig, ReplayBuffer, StateFeatureEncoder
+from utils.dqn_experiment_utils import (
+    get_dqn_best_checkpoint_path,
+    get_dqn_checkpoint_path,
+    infer_dqn_checkpoint_episodes,
+    is_better_dqn_eval_result,
+)
 
 
 def test_state_feature_encoder_uses_map_specific_feature_size() -> None:
@@ -174,13 +180,40 @@ def test_dqn_checkpoint_round_trip(tmp_path) -> None:
         seed=42,
     )
     agent = DQNAgent(config=config, device="cpu")
+    agent.remember(
+        state=(1, 1, 0, 17),
+        action=1,
+        reward=1.0,
+        next_state=(2, 1, 1, 16),
+        done=False,
+    )
+    agent.remember(
+        state=(2, 1, 1, 16),
+        action=3,
+        reward=2.5,
+        next_state=(2, 2, 1, 15),
+        done=True,
+    )
+    agent.epsilon = 0.25
+    agent.training_steps = 7
+    agent.optimization_steps = 3
     checkpoint_path = tmp_path / "dqn.pt"
 
     agent.save(checkpoint_path, metadata={"test": True})
     loaded_agent = DQNAgent.load(checkpoint_path, device="cpu")
+    original_sample = agent.replay_buffer.sample(batch_size=2)
+    loaded_sample = loaded_agent.replay_buffer.sample(batch_size=2)
 
     assert loaded_agent.config.map_name == "default"
     assert loaded_agent.encoder.input_size == agent.encoder.input_size
+    assert loaded_agent.epsilon == agent.epsilon
+    assert loaded_agent.training_steps == agent.training_steps
+    assert loaded_agent.optimization_steps == agent.optimization_steps
+    assert len(loaded_agent.replay_buffer) == len(agent.replay_buffer)
+    assert loaded_agent.replay_buffer.position == agent.replay_buffer.position
+    assert [transition.reward for transition in loaded_sample] == [
+        transition.reward for transition in original_sample
+    ]
     assert loaded_agent.select_action((1, 1, 0, 17), training=False) in {0, 1, 2, 3}
 
 
@@ -203,3 +236,55 @@ def test_dqn_checkpoint_loads_legacy_feature_version_when_missing(tmp_path) -> N
     assert loaded_agent.config.feature_version == 1
     assert loaded_agent.encoder.target_context_feature_count == 8
     assert loaded_agent.encoder.input_size == agent.encoder.input_size
+
+
+def test_dqn_checkpoint_utils_support_tagged_paths() -> None:
+    checkpoint_path = get_dqn_checkpoint_path(
+        map_name="default",
+        episodes=123,
+        seed=77,
+        checkpoint_tag="v2slice",
+    )
+
+    assert checkpoint_path.name == "dqn_agent_default_ep_123_seed_77_v2slice.pt"
+    assert infer_dqn_checkpoint_episodes(str(checkpoint_path), explicit_value=0) == 123
+
+    best_checkpoint_path = get_dqn_best_checkpoint_path(
+        map_name="default",
+        seed=77,
+        checkpoint_tag="v2slice",
+    )
+
+    assert best_checkpoint_path.name == "dqn_agent_default_best_eval_seed_77_v2slice.pt"
+
+
+def test_dqn_eval_result_comparison_prefers_task_outcomes_first() -> None:
+    baseline = {
+        "avg_reward": -100.0,
+        "avg_steps": 90.0,
+        "avg_cleaned_ratio": 1 / 3,
+        "success_rate": 0.0,
+    }
+    better_cleaned = {
+        "avg_reward": -300.0,
+        "avg_steps": 500.0,
+        "avg_cleaned_ratio": 2 / 3,
+        "success_rate": 0.0,
+    }
+    better_success = {
+        "avg_reward": -400.0,
+        "avg_steps": 550.0,
+        "avg_cleaned_ratio": 1.0,
+        "success_rate": 0.2,
+    }
+    reward_only = {
+        "avg_reward": -50.0,
+        "avg_steps": 300.0,
+        "avg_cleaned_ratio": 1 / 3,
+        "success_rate": 0.0,
+    }
+
+    assert is_better_dqn_eval_result(better_cleaned, baseline)
+    assert is_better_dqn_eval_result(better_success, better_cleaned)
+    assert is_better_dqn_eval_result(reward_only, baseline)
+    assert not is_better_dqn_eval_result(baseline, reward_only)

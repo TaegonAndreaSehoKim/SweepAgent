@@ -384,3 +384,64 @@ The most likely follow-up changes are:
 - save and select the best evaluation checkpoint during training instead of only the final checkpoint
 - locate the episode range where feature version `2` starts to collapse
 - reduce or rebalance the new reroute features if they dominate the older useful signal
+
+### Episode-Sliced Follow-Up
+
+To inspect the collapse window directly, the `feature-version 2` seed `417` run was replayed as
+episode slices with resume checkpoints every `500` episodes.
+
+This used the same evaluation-battery setup and wrote cumulative checkpoints such as:
+
+- `dqn_agent_complex_charge_bastion_ep_500_seed_417_v2slice.pt`
+- `dqn_agent_complex_charge_bastion_ep_6000_seed_417_v2slice.pt`
+- `dqn_agent_complex_charge_bastion_ep_10000_seed_417_v2slice.pt`
+
+The sliced result was not monotonic:
+
+- `1000` to `4500`: stable around `1/3` cleaned
+- `5000`: still `1/3` cleaned, but evaluation behavior collapsed to `588` steps with much worse reward
+- `6000`: temporarily recovered to `2/3` cleaned
+- `8000` to `10000`: settled back to `1/3` cleaned
+
+So the sliced rerun narrowed the regression to:
+
+- first major efficiency collapse around `5000`
+- first clear `2/3 -> 1/3` drop between `6000` and `8000`
+
+but it did **not** reproduce the older final `0/3` cleaned checkpoint at `10000`.
+
+The older final `10000` checkpoint and the sliced `10000` checkpoint now show very different greedy
+behavior:
+
+- older final `10000`: `0/3` cleaned, `65` steps, `battery_depleted`
+- sliced final `10000`: `1/3` cleaned, `588` steps, `step_limit`
+
+Because `agents/dqn_agent.py` and `scripts/train_dqn.py` have no intermediate history between the
+original route-aware DQN commit and the current checkpoint-slicing work, this difference is more
+consistent with DQN trajectory sensitivity and resume-boundary nondeterminism than with a later code
+drift in the feature or loss logic.
+
+### Best-Eval Checkpoint Support
+
+The DQN training entry point now supports periodic greedy evaluation during training and can keep a
+separate best-evaluation checkpoint instead of trusting the final epoch alone.
+
+New flags:
+
+- `--eval-every`
+- `--save-best-eval-checkpoint`
+
+The best checkpoint is selected using:
+
+- `success_rate`
+- then `avg_cleaned_ratio`
+- then `avg_reward`
+- then lower `avg_steps`
+
+and is saved as:
+
+- `dqn_agent_<map_name>_best_eval_seed_<seed>.pt`
+
+or, for tagged experiment branches:
+
+- `dqn_agent_<map_name>_best_eval_seed_<seed>_<tag>.pt`

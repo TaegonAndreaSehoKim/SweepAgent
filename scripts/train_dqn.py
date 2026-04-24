@@ -24,6 +24,16 @@ from configs.map_presets import (
     PRINT_EVERY,
     TRAIN_EPISODES,
 )
+from utils.dqn_experiment_utils import (
+    ensure_dqn_output_dirs,
+    evaluate_dqn_agent,
+    format_dqn_eval_result,
+    get_dqn_best_checkpoint_path,
+    get_dqn_checkpoint_path,
+    infer_dqn_checkpoint_episodes,
+    is_better_dqn_eval_result,
+    read_dqn_checkpoint_metadata,
+)
 from utils.experiment_utils import build_env
 
 
@@ -44,6 +54,15 @@ def parse_args() -> argparse.Namespace:
         help="Number of training episodes.",
     )
     parser.add_argument(
+        "--checkpoint-episodes",
+        type=int,
+        default=0,
+        help=(
+            "Optional episode count to embed in the checkpoint filename. "
+            "Defaults to cumulative episodes when resuming, otherwise --episodes."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -54,6 +73,27 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=PRINT_EVERY,
         help="Print one compact progress line every N episodes.",
+    )
+    parser.add_argument(
+        "--init-checkpoint",
+        type=str,
+        default="",
+        help="Optional checkpoint path to resume DQN training from.",
+    )
+    parser.add_argument(
+        "--starting-checkpoint-episodes",
+        type=int,
+        default=0,
+        help=(
+            "Optional explicit episode count already represented by --init-checkpoint. "
+            "Used only when it cannot be inferred from the checkpoint filename."
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-tag",
+        type=str,
+        default="",
+        help="Optional suffix appended to the checkpoint filename for experiment separation.",
     )
     parser.add_argument(
         "--learning-rate",
@@ -157,26 +197,23 @@ def parse_args() -> argparse.Namespace:
         help="Number of greedy evaluation episodes after training.",
     )
     parser.add_argument(
+        "--eval-every",
+        type=int,
+        default=0,
+        help="Run greedy evaluation every N training episodes. Use 0 to disable.",
+    )
+    parser.add_argument(
+        "--save-best-eval-checkpoint",
+        action="store_true",
+        help="Save an extra checkpoint whenever a new best evaluation result is found.",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="auto",
         help="Torch device: auto, cpu, cuda, or a specific torch device string.",
     )
     return parser.parse_args()
-
-
-def ensure_output_dirs() -> tuple[Path, Path]:
-    checkpoint_dir = PROJECT_ROOT / "outputs" / "checkpoints"
-    plot_dir = PROJECT_ROOT / "outputs" / "plots"
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    plot_dir.mkdir(parents=True, exist_ok=True)
-    return checkpoint_dir, plot_dir
-
-
-def get_checkpoint_path(map_name: str, episodes: int, seed: int) -> Path:
-    checkpoint_dir = PROJECT_ROOT / "outputs" / "checkpoints"
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    return checkpoint_dir / f"dqn_agent_{map_name}_ep_{episodes}_seed_{seed}.pt"
 
 
 def moving_average(values: list[float], window: int = 100) -> list[float]:
@@ -209,7 +246,7 @@ def save_line_plot(
     return output_path
 
 
-def build_agent(args: argparse.Namespace, battery_capacity: int) -> DQNAgent:
+def build_fresh_agent(args: argparse.Namespace, battery_capacity: int) -> DQNAgent:
     config = DQNConfig(
         map_name=args.map_name,
         battery_capacity=battery_capacity,
@@ -229,6 +266,33 @@ def build_agent(args: argparse.Namespace, battery_capacity: int) -> DQNAgent:
         seed=args.seed,
     )
     return DQNAgent(config=config, device=args.device)
+
+
+def build_agent(args: argparse.Namespace, battery_capacity: int) -> DQNAgent:
+    if not args.init_checkpoint:
+        return build_fresh_agent(args=args, battery_capacity=battery_capacity)
+
+    checkpoint_path = Path(args.init_checkpoint)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Initial checkpoint not found: {checkpoint_path}")
+
+    agent = DQNAgent.load(checkpoint_path, device=args.device, training=True)
+    if agent.config.map_name != args.map_name:
+        raise ValueError(
+            f"Loaded checkpoint map_name='{agent.config.map_name}' does not match "
+            f"--map-name '{args.map_name}'."
+        )
+    if agent.config.battery_capacity != battery_capacity:
+        raise ValueError(
+            f"Loaded checkpoint battery_capacity={agent.config.battery_capacity} does not "
+            f"match the requested environment battery_capacity={battery_capacity}."
+        )
+    if agent.config.feature_version != args.feature_version:
+        raise ValueError(
+            f"Loaded checkpoint feature_version={agent.config.feature_version} does not "
+            f"match --feature-version {args.feature_version}."
+        )
+    return agent
 
 
 def train_one_episode(env, agent: DQNAgent) -> dict[str, float]:
@@ -268,54 +332,67 @@ def train_one_episode(env, agent: DQNAgent) -> dict[str, float]:
     }
 
 
-def evaluate_agent(args: argparse.Namespace, agent: DQNAgent) -> dict[str, float]:
-    if args.eval_episodes <= 0:
-        return {
-            "avg_reward": 0.0,
-            "avg_steps": 0.0,
-            "avg_cleaned_ratio": 0.0,
-            "success_rate": 0.0,
-        }
-
-    env = build_env(
-        map_name=args.map_name,
-        battery_profile="evaluation",
-        battery_capacity_override=(
-            args.battery_capacity_override if args.battery_capacity_override > 0 else None
-        ),
-    )
-    rewards: list[float] = []
-    steps: list[float] = []
-    cleaned_ratios: list[float] = []
-    successes: list[float] = []
-    was_training = agent.policy_net.training
-    agent.policy_net.eval()
-
-    for _ in range(args.eval_episodes):
-        state = env.reset()
-        done = False
-        total_reward = 0.0
-        final_info: dict[str, float | str] = {}
-
-        while not done:
-            action = agent.select_action(state, training=False)
-            state, reward, done, final_info = env.step(action)
-            total_reward += reward
-
-        rewards.append(total_reward)
-        steps.append(float(final_info["steps_taken"]))
-        cleaned_ratios.append(float(final_info["cleaned_ratio"]))
-        successes.append(1.0 if float(final_info["cleaned_ratio"]) == 1.0 else 0.0)
-
-    if was_training:
-        agent.policy_net.train()
-
+def build_checkpoint_metadata(
+    args: argparse.Namespace,
+    checkpoint_episodes: int,
+    cumulative_episodes: int,
+    starting_checkpoint_episodes: int,
+    eval_result: dict[str, float],
+    best_eval_result: dict[str, float] | None,
+    best_checkpoint_episodes: int,
+    best_checkpoint_path: Path | None,
+    is_best_eval_checkpoint: bool = False,
+) -> dict[str, object]:
     return {
-        "avg_reward": mean(rewards),
-        "avg_steps": mean(steps),
-        "avg_cleaned_ratio": mean(cleaned_ratios),
-        "success_rate": mean(successes),
+        "map_name": args.map_name,
+        "episodes": args.episodes,
+        "checkpoint_episodes": checkpoint_episodes,
+        "cumulative_episodes": cumulative_episodes,
+        "seed": args.seed,
+        "init_checkpoint": args.init_checkpoint,
+        "starting_checkpoint_episodes": starting_checkpoint_episodes,
+        "checkpoint_tag": args.checkpoint_tag,
+        "battery_profile": args.battery_profile,
+        "battery_capacity_override": args.battery_capacity_override,
+        "feature_version": args.feature_version,
+        "eval_episodes": args.eval_episodes,
+        "eval_every": args.eval_every,
+        "save_best_eval_checkpoint": args.save_best_eval_checkpoint,
+        "eval_result": eval_result,
+        "best_eval_result": best_eval_result or {},
+        "best_checkpoint_episodes": best_checkpoint_episodes,
+        "best_checkpoint_path": str(best_checkpoint_path) if best_checkpoint_path else "",
+        "is_best_eval_checkpoint": is_best_eval_checkpoint,
     }
+
+
+def maybe_load_existing_best_eval(
+    args: argparse.Namespace,
+    best_checkpoint_path: Path | None,
+) -> tuple[dict[str, float] | None, int]:
+    if not args.init_checkpoint or best_checkpoint_path is None or not best_checkpoint_path.exists():
+        return None, 0
+
+    metadata = read_dqn_checkpoint_metadata(best_checkpoint_path)
+    eval_result = metadata.get("eval_result")
+    if not isinstance(eval_result, dict) or not eval_result:
+        return None, 0
+
+    checkpoint_episodes = int(
+        metadata.get(
+            "best_checkpoint_episodes",
+            metadata.get(
+                "checkpoint_episodes",
+                metadata.get("cumulative_episodes", metadata.get("episodes", 0)),
+            ),
+        )
+    )
+    return {
+        "avg_reward": float(eval_result.get("avg_reward", 0.0)),
+        "avg_steps": float(eval_result.get("avg_steps", 0.0)),
+        "avg_cleaned_ratio": float(eval_result.get("avg_cleaned_ratio", 0.0)),
+        "success_rate": float(eval_result.get("success_rate", 0.0)),
+    }, checkpoint_episodes
 
 
 def main() -> None:
@@ -330,13 +407,40 @@ def main() -> None:
     if env.battery_capacity is None:
         raise ValueError("DQN training requires a battery-enabled map preset.")
 
-    agent = build_agent(args=args, battery_capacity=env.battery_capacity)
-    _, plot_dir = ensure_output_dirs()
-    checkpoint_path = get_checkpoint_path(
-        map_name=args.map_name,
-        episodes=args.episodes,
-        seed=args.seed,
+    starting_checkpoint_episodes = infer_dqn_checkpoint_episodes(
+        path_str=args.init_checkpoint,
+        explicit_value=args.starting_checkpoint_episodes,
     )
+    checkpoint_episodes = (
+        args.checkpoint_episodes
+        if args.checkpoint_episodes > 0
+        else starting_checkpoint_episodes + args.episodes
+    )
+    cumulative_episodes = starting_checkpoint_episodes + args.episodes
+
+    agent = build_agent(args=args, battery_capacity=env.battery_capacity)
+    _, plot_dir, _ = ensure_dqn_output_dirs()
+    checkpoint_path = get_dqn_checkpoint_path(
+        map_name=args.map_name,
+        episodes=checkpoint_episodes,
+        seed=args.seed,
+        checkpoint_tag=args.checkpoint_tag,
+    )
+    best_checkpoint_path = (
+        get_dqn_best_checkpoint_path(
+            map_name=args.map_name,
+            seed=args.seed,
+            checkpoint_tag=args.checkpoint_tag,
+        )
+        if args.save_best_eval_checkpoint
+        else None
+    )
+    best_eval_result, best_checkpoint_episodes = maybe_load_existing_best_eval(
+        args=args,
+        best_checkpoint_path=best_checkpoint_path,
+    )
+    last_eval_result: dict[str, float] | None = None
+    last_eval_checkpoint_episodes = 0
 
     rewards: list[float] = []
     cleaned_ratios: list[float] = []
@@ -346,22 +450,39 @@ def main() -> None:
 
     print(f"Training DQN agent on map='{args.map_name}'...")
     print(f"episodes: {args.episodes}")
+    print(f"checkpoint_episodes: {checkpoint_episodes}")
+    print(f"cumulative_episodes: {cumulative_episodes}")
     print(f"seed: {args.seed}")
+    print(f"init_checkpoint: {args.init_checkpoint if args.init_checkpoint else 'none'}")
+    print(f"starting_checkpoint_episodes: {starting_checkpoint_episodes}")
+    print(f"checkpoint_tag: {args.checkpoint_tag if args.checkpoint_tag else 'none'}")
     print(f"device: {agent.device}")
-    print(f"learning_rate: {args.learning_rate}")
-    print(f"discount_factor: {args.discount_factor}")
-    print(f"epsilon_start: {args.epsilon_start}")
-    print(f"epsilon_decay: {args.epsilon_decay}")
-    print(f"epsilon_min: {args.epsilon_min}")
-    print(f"batch_size: {args.batch_size}")
-    print(f"replay_capacity: {args.replay_capacity}")
-    print(f"learning_starts: {args.learning_starts}")
-    print(f"train_every: {args.train_every}")
-    print(f"target_update_interval: {args.target_update_interval}")
-    print(f"hidden_size: {args.hidden_size}")
-    print(f"guided_exploration_ratio: {args.guided_exploration_ratio}")
+    print(f"learning_rate: {agent.config.learning_rate}")
+    print(f"discount_factor: {agent.config.discount_factor}")
+    print(f"epsilon: {agent.epsilon}")
+    print(f"epsilon_decay: {agent.config.epsilon_decay}")
+    print(f"epsilon_min: {agent.config.epsilon_min}")
+    print(f"batch_size: {agent.config.batch_size}")
+    print(f"replay_capacity: {agent.config.replay_capacity}")
+    print(f"learning_starts: {agent.config.learning_starts}")
+    print(f"train_every: {agent.config.train_every}")
+    print(f"target_update_interval: {agent.config.target_update_interval}")
+    print(f"hidden_size: {agent.config.hidden_size}")
+    print(f"guided_exploration_ratio: {agent.config.guided_exploration_ratio}")
+    print(f"feature_version: {agent.config.feature_version}")
     print(f"battery_profile: {args.battery_profile}")
     print(f"battery_capacity: {env.battery_capacity}")
+    print(f"eval_episodes: {args.eval_episodes}")
+    print(f"eval_every: {args.eval_every}")
+    print(f"save_best_eval_checkpoint: {args.save_best_eval_checkpoint}")
+    if best_checkpoint_path is not None:
+        print(f"best_checkpoint_path: {best_checkpoint_path}")
+        if best_eval_result is not None:
+            print(
+                "resume_best_eval: "
+                f"checkpoint_episodes={best_checkpoint_episodes} | "
+                f"{format_dqn_eval_result(best_eval_result)}"
+            )
 
     for episode_idx in range(1, args.episodes + 1):
         episode_result = train_one_episode(env=env, agent=agent)
@@ -387,6 +508,53 @@ def main() -> None:
                 f"loss={avg_loss:.4f} | "
                 f"replay={len(agent.replay_buffer)}"
             )
+
+        if (
+            args.eval_episodes > 0
+            and args.eval_every > 0
+            and episode_idx % args.eval_every == 0
+        ):
+            current_eval_checkpoint_episodes = starting_checkpoint_episodes + episode_idx
+            eval_result = evaluate_dqn_agent(
+                map_name=args.map_name,
+                eval_episodes=args.eval_episodes,
+                agent=agent,
+                battery_capacity_override=(
+                    args.battery_capacity_override if args.battery_capacity_override > 0 else None
+                ),
+            )
+            last_eval_result = eval_result
+            last_eval_checkpoint_episodes = current_eval_checkpoint_episodes
+
+            print(
+                f"eval@{current_eval_checkpoint_episodes}: "
+                f"{format_dqn_eval_result(eval_result)}"
+            )
+
+            if is_better_dqn_eval_result(eval_result, best_eval_result):
+                best_eval_result = eval_result
+                best_checkpoint_episodes = current_eval_checkpoint_episodes
+                print(
+                    "best_eval_updated: "
+                    f"checkpoint_episodes={best_checkpoint_episodes} | "
+                    f"{format_dqn_eval_result(best_eval_result)}"
+                )
+
+                if best_checkpoint_path is not None:
+                    agent.save(
+                        best_checkpoint_path,
+                        metadata=build_checkpoint_metadata(
+                            args=args,
+                            checkpoint_episodes=best_checkpoint_episodes,
+                            cumulative_episodes=current_eval_checkpoint_episodes,
+                            starting_checkpoint_episodes=starting_checkpoint_episodes,
+                            eval_result=eval_result,
+                            best_eval_result=best_eval_result,
+                            best_checkpoint_episodes=best_checkpoint_episodes,
+                            best_checkpoint_path=best_checkpoint_path,
+                            is_best_eval_checkpoint=True,
+                        ),
+                    )
 
     reward_plot_path = save_line_plot(
         values=moving_average(rewards, window=100),
@@ -419,18 +587,56 @@ def main() -> None:
         output_path=plot_dir / f"dqn_training_loss_{args.map_name}.png",
     )
 
-    eval_result = evaluate_agent(args=args, agent=agent)
+    if args.eval_episodes > 0 and last_eval_checkpoint_episodes == cumulative_episodes:
+        eval_result = last_eval_result if last_eval_result is not None else {
+            "avg_reward": 0.0,
+            "avg_steps": 0.0,
+            "avg_cleaned_ratio": 0.0,
+            "success_rate": 0.0,
+        }
+    else:
+        eval_result = evaluate_dqn_agent(
+            map_name=args.map_name,
+            eval_episodes=args.eval_episodes,
+            agent=agent,
+            battery_capacity_override=(
+                args.battery_capacity_override if args.battery_capacity_override > 0 else None
+            ),
+        )
+        last_eval_result = eval_result
+        last_eval_checkpoint_episodes = cumulative_episodes
+
+    if is_better_dqn_eval_result(eval_result, best_eval_result):
+        best_eval_result = eval_result
+        best_checkpoint_episodes = cumulative_episodes
+        if best_checkpoint_path is not None:
+            agent.save(
+                best_checkpoint_path,
+                metadata=build_checkpoint_metadata(
+                    args=args,
+                    checkpoint_episodes=best_checkpoint_episodes,
+                    cumulative_episodes=cumulative_episodes,
+                    starting_checkpoint_episodes=starting_checkpoint_episodes,
+                    eval_result=eval_result,
+                    best_eval_result=best_eval_result,
+                    best_checkpoint_episodes=best_checkpoint_episodes,
+                    best_checkpoint_path=best_checkpoint_path,
+                    is_best_eval_checkpoint=True,
+                ),
+            )
+
     agent.save(
         checkpoint_path,
-        metadata={
-            "map_name": args.map_name,
-            "episodes": args.episodes,
-            "seed": args.seed,
-            "battery_profile": args.battery_profile,
-            "battery_capacity_override": args.battery_capacity_override,
-            "eval_episodes": args.eval_episodes,
-            "eval_result": eval_result,
-        },
+        metadata=build_checkpoint_metadata(
+            args=args,
+            checkpoint_episodes=checkpoint_episodes,
+            cumulative_episodes=cumulative_episodes,
+            starting_checkpoint_episodes=starting_checkpoint_episodes,
+            eval_result=eval_result,
+            best_eval_result=best_eval_result,
+            best_checkpoint_episodes=best_checkpoint_episodes,
+            best_checkpoint_path=best_checkpoint_path,
+        ),
     )
 
     final_window = min(100, len(rewards))
@@ -449,13 +655,15 @@ def main() -> None:
     print(f"last_{final_window}_avg_cleaned_ratio: {mean(cleaned_ratios[-final_window:]) * 100:.2f}%")
     print(f"last_{final_window}_success_rate: {mean(successes[-final_window:]) * 100:.2f}%")
     if args.eval_episodes > 0:
+        print(f"eval: {format_dqn_eval_result(eval_result)}")
+    if best_eval_result is not None:
         print(
-            "eval: "
-            f"avg_reward={eval_result['avg_reward']:.2f} | "
-            f"avg_steps={eval_result['avg_steps']:.2f} | "
-            f"avg_cleaned_ratio={eval_result['avg_cleaned_ratio'] * 100:.2f}% | "
-            f"success_rate={eval_result['success_rate'] * 100:.2f}%"
+            "best_eval: "
+            f"checkpoint_episodes={best_checkpoint_episodes} | "
+            f"{format_dqn_eval_result(best_eval_result)}"
         )
+        if best_checkpoint_path is not None:
+            print(f"best_checkpoint: {best_checkpoint_path}")
 
 
 if __name__ == "__main__":

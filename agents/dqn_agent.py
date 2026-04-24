@@ -95,6 +95,46 @@ class ReplayBuffer:
     def sample(self, batch_size: int) -> list[Transition]:
         return self.rng.sample(self.buffer, batch_size)
 
+    def to_checkpoint(self) -> dict[str, Any]:
+        return {
+            "capacity": self.capacity,
+            "position": self.position,
+            "rng_state": self.rng.getstate(),
+            "buffer": [
+                {
+                    "state": list(transition.state),
+                    "action": transition.action,
+                    "reward": transition.reward,
+                    "next_state": list(transition.next_state),
+                    "done": transition.done,
+                }
+                for transition in self.buffer
+            ],
+        }
+
+    @classmethod
+    def from_checkpoint(cls, payload: dict[str, Any]) -> "ReplayBuffer":
+        replay_buffer = cls(capacity=int(payload["capacity"]))
+        replay_buffer.position = int(payload.get("position", 0))
+
+        serialized_buffer = payload.get("buffer", [])
+        replay_buffer.buffer = [
+            Transition(
+                state=tuple(int(value) for value in transition["state"]),
+                action=int(transition["action"]),
+                reward=float(transition["reward"]),
+                next_state=tuple(int(value) for value in transition["next_state"]),
+                done=bool(transition["done"]),
+            )
+            for transition in serialized_buffer
+        ]
+
+        rng_state = payload.get("rng_state")
+        if rng_state is not None:
+            replay_buffer.rng.setstate(rng_state)
+
+        return replay_buffer
+
 
 class StateFeatureEncoder:
     FEATURE_VERSION_LEGACY = 1
@@ -942,6 +982,14 @@ class DQNAgent:
             "epsilon": self.epsilon,
             "training_steps": self.training_steps,
             "optimization_steps": self.optimization_steps,
+            "rng_state": self.rng.getstate(),
+            "replay_buffer": self.replay_buffer.to_checkpoint(),
+            "torch_rng_state": torch.get_rng_state(),
+            "cuda_rng_state_all": (
+                torch.cuda.get_rng_state_all()
+                if torch.cuda.is_available()
+                else None
+            ),
             "policy_state_dict": self.policy_net.state_dict(),
             "target_state_dict": self.target_net.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
@@ -977,6 +1025,18 @@ class DQNAgent:
         agent.epsilon = float(payload.get("epsilon", config.epsilon))
         agent.training_steps = int(payload.get("training_steps", 0))
         agent.optimization_steps = int(payload.get("optimization_steps", 0))
+        rng_state = payload.get("rng_state")
+        if rng_state is not None:
+            agent.rng.setstate(rng_state)
+        replay_buffer_payload = payload.get("replay_buffer")
+        if replay_buffer_payload is not None:
+            agent.replay_buffer = ReplayBuffer.from_checkpoint(replay_buffer_payload)
+        torch_rng_state = payload.get("torch_rng_state")
+        if torch_rng_state is not None:
+            torch.set_rng_state(torch_rng_state.cpu())
+        cuda_rng_state_all = payload.get("cuda_rng_state_all")
+        if agent.device.type == "cuda" and cuda_rng_state_all:
+            torch.cuda.set_rng_state_all([state.cpu() for state in cuda_rng_state_all])
         agent.policy_net.load_state_dict(payload["policy_state_dict"])
         agent.target_net.load_state_dict(payload.get("target_state_dict", payload["policy_state_dict"]))
         agent.optimizer.load_state_dict(payload["optimizer_state_dict"])

@@ -371,6 +371,15 @@ PowerShell wrapper:
 .\scripts\train_dqn.ps1 --map-name complex_charge_bastion --battery-profile evaluation --episodes 5000 --seed 417 --print-every 500 --learning-rate 0.0005 --epsilon-decay 0.99995 --epsilon-min 0.10 --learning-starts 1000 --batch-size 128 --replay-capacity 100000 --train-every 8 --target-update-interval 1000 --hidden-size 256 --guided-exploration-ratio 0.6 --eval-episodes 20 --feature-version 2
 ```
 
+To keep the best greedy evaluation checkpoint instead of only the final checkpoint, add:
+
+```bash
+python scripts/train_dqn.py --map-name complex_charge_bastion --battery-profile evaluation --episodes 5000 --seed 417 --print-every 500 --learning-rate 0.0005 --epsilon-decay 0.99995 --epsilon-min 0.10 --learning-starts 1000 --batch-size 128 --replay-capacity 100000 --train-every 8 --target-update-interval 1000 --hidden-size 256 --guided-exploration-ratio 0.6 --eval-episodes 50 --eval-every 500 --feature-version 2 --save-best-eval-checkpoint
+```
+
+This writes the usual final checkpoint and also keeps a separate best-evaluation checkpoint such as
+`dqn_agent_complex_charge_bastion_best_eval_seed_417.pt`.
+
 The DQN implementation currently includes:
 
 - replay buffer training
@@ -384,6 +393,15 @@ The DQN implementation currently includes:
 The best current DQN result on `complex_charge_bastion` reached `2/3` cleaned under the evaluation battery profile.
 Higher guided exploration ratios produced more dirty-reaching training trajectories but did not improve greedy evaluation, so the current best setting keeps guidance at `0.6`.
 The newer `feature-version 2` route-via-charger experiment did not beat that baseline in long training and currently serves as an experimental branch rather than the default best recipe.
+
+### Slice DQN checkpoints by episode
+
+```bash
+python scripts/train_dqn_sliced.py --map-name complex_charge_bastion --battery-profile evaluation --total-episodes 10000 --slice-episodes 500 --seed 417 --print-every 500 --learning-rate 0.0005 --epsilon-decay 0.99995 --epsilon-min 0.10 --learning-starts 1000 --batch-size 128 --replay-capacity 100000 --train-every 8 --target-update-interval 1000 --hidden-size 256 --guided-exploration-ratio 0.6 --eval-episodes 50 --feature-version 2 --device cuda --checkpoint-tag v2slice
+```
+
+This workflow resumes DQN training across episode slices, saves one checkpoint per cumulative slice, and writes a CSV summary under `outputs/logs/` so the collapse window can be located without manually rerunning each cutoff.
+Use `--checkpoint-tag` for experimental branches such as `feature-version 2` so older DQN checkpoints with the same map, episode count, and seed are not overwritten.
 
 ### Run batch training in parallel
 
@@ -438,6 +456,5 @@ The current improvement areas are:
 - improving the final `complex_charge_bastion` transition from `2/3` cleaned to full success
 - stabilizing route-via-charger DQN training so richer features do not collapse greedy evaluation
 - comparing DQN behavior across seeds instead of relying on one promising run
-- selecting the best evaluation checkpoint during DQN training instead of trusting the final epoch
 - deciding whether DQN should be integrated into the pygame UI
 - keeping generated checkpoints, plots, logs, and GIFs out of version control
