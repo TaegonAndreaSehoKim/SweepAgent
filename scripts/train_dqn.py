@@ -131,6 +131,13 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--feature-version",
+        type=int,
+        choices=(1, 2),
+        default=2,
+        help="State feature encoder version. Use 2 for route-via-charger context.",
+    )
+    parser.add_argument(
         "--battery-profile",
         type=str,
         choices=("training", "evaluation"),
@@ -218,6 +225,7 @@ def build_agent(args: argparse.Namespace, battery_capacity: int) -> DQNAgent:
         target_update_interval=args.target_update_interval,
         hidden_size=args.hidden_size,
         guided_exploration_ratio=args.guided_exploration_ratio,
+        feature_version=args.feature_version,
         seed=args.seed,
     )
     return DQNAgent(config=config, device=args.device)

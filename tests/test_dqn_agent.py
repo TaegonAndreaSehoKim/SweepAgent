@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import torch
+
 from agents.dqn_agent import DQNAgent, DQNConfig, ReplayBuffer, StateFeatureEncoder
 
 
@@ -9,8 +11,23 @@ def test_state_feature_encoder_uses_map_specific_feature_size() -> None:
     features = encoder.encode((1, 1, 0, 17))
 
     assert len(features) == encoder.input_size
-    assert encoder.input_size == 6 + (3 * 2) + 8 + (4 * 4)
+    assert encoder.target_context_feature_count == 13
+    assert encoder.input_size == 6 + (3 * 2) + 13 + (4 * 4)
     assert all(-1.0 <= value <= 1.0 for value in features)
+
+
+def test_state_feature_encoder_legacy_feature_version_preserves_old_size() -> None:
+    encoder = StateFeatureEncoder(
+        map_name="default",
+        battery_capacity=17,
+        feature_version=1,
+    )
+
+    features = encoder.encode((1, 1, 0, 17))
+
+    assert len(features) == encoder.input_size
+    assert encoder.target_context_feature_count == 8
+    assert encoder.input_size == 6 + (3 * 2) + 8 + (4 * 4)
 
 
 def test_state_feature_encoder_marks_invalid_action_lookahead() -> None:
@@ -29,12 +46,38 @@ def test_state_feature_encoder_updates_target_context_after_cleaning() -> None:
 
     before_cleaning = encoder.encode((1, 20, 0, 48))
     after_cleaning = encoder.encode((1, 20, 1, 48))
-    before_target_context = before_cleaning[-24:-16]
-    after_target_context = after_cleaning[-24:-16]
+    target_context_start = -(
+        encoder.action_lookahead_feature_count + encoder.target_context_feature_count
+    )
+    before_target_context = before_cleaning[
+        target_context_start : -encoder.action_lookahead_feature_count
+    ]
+    after_target_context = after_cleaning[
+        target_context_start : -encoder.action_lookahead_feature_count
+    ]
 
     assert before_target_context != after_target_context
     assert before_target_context[0] == 1.0
     assert after_target_context[0] == 2 / 3
+
+
+def test_state_feature_encoder_marks_route_via_charger_as_required() -> None:
+    encoder = StateFeatureEncoder(map_name="complex_charge_bastion", battery_capacity=65)
+
+    features = encoder.encode((15, 10, 5, 30))
+    target_context_start = -(
+        encoder.action_lookahead_feature_count + encoder.target_context_feature_count
+    )
+    target_context = features[
+        target_context_start : -encoder.action_lookahead_feature_count
+    ]
+
+    assert target_context[5] < 0.0
+    assert target_context[6] == 0.0
+    assert target_context[8] == 1.0
+    assert target_context[10] > 0.0
+    assert target_context[11] == 1.0
+    assert target_context[12] == 1.0
 
 
 def test_dqn_agent_masks_invalid_actions_for_random_exploration() -> None:
@@ -139,3 +182,24 @@ def test_dqn_checkpoint_round_trip(tmp_path) -> None:
     assert loaded_agent.config.map_name == "default"
     assert loaded_agent.encoder.input_size == agent.encoder.input_size
     assert loaded_agent.select_action((1, 1, 0, 17), training=False) in {0, 1, 2, 3}
+
+
+def test_dqn_checkpoint_loads_legacy_feature_version_when_missing(tmp_path) -> None:
+    config = DQNConfig(
+        map_name="default",
+        battery_capacity=17,
+        hidden_size=16,
+        feature_version=1,
+        seed=42,
+    )
+    agent = DQNAgent(config=config, device="cpu")
+    checkpoint_path = tmp_path / "legacy_dqn.pt"
+    payload = agent.to_checkpoint(metadata={"legacy": True})
+    del payload["config"]["feature_version"]
+    torch.save(payload, checkpoint_path)
+
+    loaded_agent = DQNAgent.load(checkpoint_path, device="cpu")
+
+    assert loaded_agent.config.feature_version == 1
+    assert loaded_agent.encoder.target_context_feature_count == 8
+    assert loaded_agent.encoder.input_size == agent.encoder.input_size

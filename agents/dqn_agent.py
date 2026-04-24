@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import asdict, dataclass
+import math
 import random
 from pathlib import Path
 from typing import Any, Iterable, NamedTuple
@@ -24,6 +25,20 @@ class Transition(NamedTuple):
     done: bool
 
 
+class TargetRouteProfile(NamedTuple):
+    target_distance: int
+    recovery_distance: int
+    direct_route_cost: int
+    direct_margin: float
+    route_charger_id: int
+    route_to_charger_distance: int
+    charger_to_target_distance: int
+    via_route_total_cost: int
+    via_post_charge_margin: float
+    direct_feasible: bool
+    via_route_feasible: bool
+
+
 @dataclass
 class DQNConfig:
     map_name: str
@@ -41,6 +56,7 @@ class DQNConfig:
     target_update_interval: int = 1000
     hidden_size: int = 128
     guided_exploration_ratio: float = 0.0
+    feature_version: int = 2
     seed: int | None = None
 
 
@@ -81,6 +97,8 @@ class ReplayBuffer:
 
 
 class StateFeatureEncoder:
+    FEATURE_VERSION_LEGACY = 1
+    FEATURE_VERSION_ROUTE_VIA_CHARGER = 2
     ACTION_DELTAS = (
         (-1, 0),
         (1, 0),
@@ -88,18 +106,36 @@ class StateFeatureEncoder:
         (0, 1),
     )
 
-    def __init__(self, map_name: str, battery_capacity: int) -> None:
+    def __init__(
+        self,
+        map_name: str,
+        battery_capacity: int,
+        feature_version: int = FEATURE_VERSION_ROUTE_VIA_CHARGER,
+    ) -> None:
         if map_name not in MAP_PRESETS:
             supported_maps = ", ".join(MAP_PRESETS.keys())
             raise ValueError(
                 f"Unknown map_name='{map_name}'. Supported maps: {supported_maps}"
             )
+        if feature_version not in (
+            self.FEATURE_VERSION_LEGACY,
+            self.FEATURE_VERSION_ROUTE_VIA_CHARGER,
+        ):
+            raise ValueError(
+                f"Unsupported feature_version={feature_version}. "
+                "Supported values: 1, 2."
+            )
 
         self.map_name = map_name
+        self.feature_version = feature_version
         self.grid_map = MAP_PRESETS[map_name]["grid_map"]
         self.rows = len(self.grid_map)
         self.cols = len(self.grid_map[0]) if self.rows else 0
         self.battery_capacity = max(1, int(battery_capacity))
+        self.battery_safety_reserve = max(
+            8,
+            math.ceil(self.battery_capacity * 0.15),
+        )
         self.max_grid_distance = max(1, self.rows * self.cols)
         self.dirty_positions = self._find_positions("D")
         self.charger_positions = self._find_positions("C")
@@ -110,13 +146,19 @@ class StateFeatureEncoder:
             self._build_distance_map([position]) for position in self.charger_positions
         ]
         self.dirty_anchor_charger_ids = self._build_dirty_anchor_charger_ids()
-        base_feature_count = 6 + (len(self.dirty_positions) * 2) + len(self.charger_positions)
-        action_lookahead_feature_count = len(self.ACTION_DELTAS) * 4
-        target_context_feature_count = 8
+        self.base_feature_count = 6 + (len(self.dirty_positions) * 2) + len(
+            self.charger_positions
+        )
+        self.action_lookahead_feature_count = len(self.ACTION_DELTAS) * 4
+        self.target_context_feature_count = (
+            8
+            if self.feature_version == self.FEATURE_VERSION_LEGACY
+            else 13
+        )
         self.input_size = (
-            base_feature_count
-            + action_lookahead_feature_count
-            + target_context_feature_count
+            self.base_feature_count
+            + self.action_lookahead_feature_count
+            + self.target_context_feature_count
         )
 
     def _find_positions(self, symbol: str) -> list[tuple[int, int]]:
@@ -266,9 +308,10 @@ class StateFeatureEncoder:
 
             dirty_row, dirty_col = self.dirty_positions[dirty_idx]
             dirty_to_charger = self._nearest_charger_distance(dirty_row, dirty_col)
-            if dirty_to_charger < 0:
+            route_cost = self._safe_route_cost(distance_to_dirty, dirty_to_charger)
+            if route_cost < 0:
                 continue
-            if distance_to_dirty + dirty_to_charger > battery_remaining:
+            if route_cost > battery_remaining:
                 continue
 
             if best_distance == -1 or distance_to_dirty < best_distance:
@@ -295,9 +338,10 @@ class StateFeatureEncoder:
 
             dirty_row, dirty_col = self.dirty_positions[dirty_idx]
             dirty_to_charger = self._nearest_charger_distance(dirty_row, dirty_col)
-            if dirty_to_charger < 0:
+            route_cost = self._safe_route_cost(distance_to_dirty, dirty_to_charger)
+            if route_cost < 0:
                 continue
-            if distance_to_dirty + dirty_to_charger > battery_remaining:
+            if route_cost > battery_remaining:
                 continue
 
             if best_distance == -1 or distance_to_dirty < best_distance:
@@ -315,6 +359,125 @@ class StateFeatureEncoder:
             if best_distance == -1 or distance < best_distance:
                 best_distance = distance
         return best_distance
+
+    def _nearest_charger_id(self, row: int, col: int) -> int:
+        best_charger_id = -1
+        best_distance = -1
+
+        for charger_id, distance_map in enumerate(self.charger_distance_maps):
+            distance = self._distance_from_map(distance_map, row, col)
+            if distance < 0:
+                continue
+            if best_distance == -1 or distance < best_distance:
+                best_distance = distance
+                best_charger_id = charger_id
+
+        return best_charger_id
+
+    def _route_safety_reserve(self) -> int:
+        if self.feature_version == self.FEATURE_VERSION_LEGACY:
+            return 0
+        return self.battery_safety_reserve
+
+    def _emergency_charger_buffer(self) -> int:
+        if self.feature_version == self.FEATURE_VERSION_LEGACY:
+            return 2
+        return self.battery_safety_reserve
+
+    def _safe_route_cost(self, outbound_distance: int, recovery_distance: int) -> int:
+        if outbound_distance < 0 or recovery_distance < 0:
+            return -1
+        return outbound_distance + recovery_distance + self._route_safety_reserve()
+
+    def _normalized_route_margin(self, margin: int) -> float:
+        return max(-1.0, min(1.0, margin / self.battery_capacity))
+
+    def _normalized_route_cost(self, route_cost: int) -> float:
+        if route_cost < 0:
+            return 1.0
+        max_route_cost = self.max_grid_distance + self._route_safety_reserve()
+        return min(1.0, route_cost / max(1, max_route_cost))
+
+    def _normalized_charger_id(self, charger_id: int) -> float:
+        if charger_id < 0 or len(self.charger_positions) <= 1:
+            return 0.0
+        return charger_id / max(1, len(self.charger_positions) - 1)
+
+    def _target_route_profile(
+        self,
+        row: int,
+        col: int,
+        target_dirty_idx: int,
+        battery_remaining: int,
+    ) -> TargetRouteProfile:
+        target_row, target_col = self.dirty_positions[target_dirty_idx]
+        target_distance = self._distance_from_map(
+            self.dirty_distance_maps[target_dirty_idx],
+            row,
+            col,
+        )
+        recovery_distance = self._nearest_charger_distance(target_row, target_col)
+        direct_route_cost = self._safe_route_cost(target_distance, recovery_distance)
+        direct_margin = self._normalized_route_margin(
+            battery_remaining - direct_route_cost
+            if direct_route_cost >= 0
+            else -self.battery_capacity
+        )
+        direct_feasible = direct_route_cost >= 0 and direct_route_cost <= battery_remaining
+
+        route_charger_id = self._nearest_charger_id(row, col)
+        route_to_charger_distance = -1
+        charger_to_target_distance = -1
+        via_route_total_cost = -1
+        via_post_charge_margin = -1.0
+        via_route_feasible = False
+
+        if route_charger_id >= 0:
+            route_to_charger_distance = self._distance_from_map(
+                self.charger_distance_maps[route_charger_id],
+                row,
+                col,
+            )
+            charger_row, charger_col = self.charger_positions[route_charger_id]
+            charger_to_target_distance = self._distance_from_map(
+                self.dirty_distance_maps[target_dirty_idx],
+                charger_row,
+                charger_col,
+            )
+            via_post_charge_cost = self._safe_route_cost(
+                charger_to_target_distance,
+                recovery_distance,
+            )
+            via_route_total_cost = (
+                route_to_charger_distance + via_post_charge_cost
+                if route_to_charger_distance >= 0 and via_post_charge_cost >= 0
+                else -1
+            )
+            via_post_charge_margin = self._normalized_route_margin(
+                self.battery_capacity - via_post_charge_cost
+                if via_post_charge_cost >= 0
+                else -self.battery_capacity
+            )
+            via_route_feasible = (
+                route_to_charger_distance >= 0
+                and route_to_charger_distance <= battery_remaining
+                and via_post_charge_cost >= 0
+                and via_post_charge_cost <= self.battery_capacity
+            )
+
+        return TargetRouteProfile(
+            target_distance=target_distance,
+            recovery_distance=recovery_distance,
+            direct_route_cost=direct_route_cost,
+            direct_margin=direct_margin,
+            route_charger_id=route_charger_id,
+            route_to_charger_distance=route_to_charger_distance,
+            charger_to_target_distance=charger_to_target_distance,
+            via_route_total_cost=via_route_total_cost,
+            via_post_charge_margin=via_post_charge_margin,
+            direct_feasible=direct_feasible,
+            via_route_feasible=via_route_feasible,
+        )
 
     def _normalized_distance_delta(self, before: int, after: int) -> float:
         if before < 0 and after < 0:
@@ -406,7 +569,7 @@ class StateFeatureEncoder:
             target_dirty_idx = self._nearest_remaining_dirty_index(row, col, cleaned_mask)
 
         if target_dirty_idx == -1:
-            return [
+            target_context = [
                 remaining_dirty_count / dirty_count,
                 0.0,
                 0.0,
@@ -416,43 +579,55 @@ class StateFeatureEncoder:
                 0.0,
                 0.0,
             ]
+            if self.feature_version == self.FEATURE_VERSION_LEGACY:
+                return target_context
+            target_context.extend([0.0, 1.0, 0.0, 0.0, 0.0])
+            return target_context
 
         target_row, target_col = self.dirty_positions[target_dirty_idx]
-        target_distance = self._distance_from_map(
-            self.dirty_distance_maps[target_dirty_idx],
-            row,
-            col,
-        )
         target_anchor_id = self.dirty_anchor_charger_ids[target_dirty_idx]
         nearest_charger_distance = self._nearest_charger_distance(row, col)
-        target_charger_distance = self._nearest_charger_distance(target_row, target_col)
-        route_cost = (
-            target_distance + target_charger_distance
-            if target_distance >= 0 and target_charger_distance >= 0
-            else self.max_grid_distance
+        route_profile = self._target_route_profile(
+            row=row,
+            col=col,
+            target_dirty_idx=target_dirty_idx,
+            battery_remaining=battery_remaining,
         )
-        route_margin = (battery_remaining - route_cost) / self.battery_capacity
-        route_margin = max(-1.0, min(1.0, route_margin))
-
-        return [
+        target_context = [
             remaining_dirty_count / dirty_count,
             target_row / max(1, self.rows - 1),
             target_col / max(1, self.cols - 1),
-            min(1.0, max(0, target_distance) / self.max_grid_distance),
-            (
-                target_anchor_id / max(1, len(self.charger_positions) - 1)
-                if target_anchor_id >= 0 and len(self.charger_positions) > 1
-                else 0.0
-            ),
-            route_margin,
+            min(1.0, max(0, route_profile.target_distance) / self.max_grid_distance),
+            self._normalized_charger_id(target_anchor_id),
+            route_profile.direct_margin,
             has_safe_target,
             (
                 1.0
                 if nearest_charger_distance >= 0
-                and battery_remaining <= nearest_charger_distance + 2
+                and battery_remaining
+                <= nearest_charger_distance + self._emergency_charger_buffer()
                 else 0.0
             ),
         ]
+
+        if self.feature_version == self.FEATURE_VERSION_LEGACY:
+            return target_context
+
+        reroute_required = (
+            1.0
+            if not route_profile.direct_feasible and route_profile.via_route_feasible
+            else 0.0
+        )
+        target_context.extend(
+            [
+                self._normalized_charger_id(route_profile.route_charger_id),
+                self._normalized_route_cost(route_profile.via_route_total_cost),
+                route_profile.via_post_charge_margin,
+                1.0 if route_profile.via_route_feasible else 0.0,
+                reroute_required,
+            ]
+        )
+        return target_context
 
     def guided_action(self, state: State) -> int | None:
         row, col, cleaned_mask, battery_value = state
@@ -466,7 +641,10 @@ class StateFeatureEncoder:
             return None
 
         charger_distance = self._nearest_charger_distance(row, col)
-        if charger_distance >= 0 and battery_remaining <= charger_distance + 2:
+        if (
+            charger_distance >= 0
+            and battery_remaining <= charger_distance + self._emergency_charger_buffer()
+        ):
             target_kind = "charger"
         elif self._safe_remaining_dirty_distance(
             row,
@@ -600,6 +778,7 @@ class DQNAgent:
         self.encoder = StateFeatureEncoder(
             map_name=config.map_name,
             battery_capacity=config.battery_capacity,
+            feature_version=config.feature_version,
         )
 
         if config.seed is not None:
@@ -788,7 +967,12 @@ class DQNAgent:
             else torch.device(device)
         )
         payload = torch.load(input_path, map_location=resolved_device)
-        config = DQNConfig(**payload["config"])
+        config_payload = dict(payload["config"])
+        config_payload.setdefault(
+            "feature_version",
+            StateFeatureEncoder.FEATURE_VERSION_LEGACY,
+        )
+        config = DQNConfig(**config_payload)
         agent = cls(config=config, device=str(resolved_device))
         agent.epsilon = float(payload.get("epsilon", config.epsilon))
         agent.training_steps = int(payload.get("training_steps", 0))

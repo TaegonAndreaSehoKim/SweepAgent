@@ -317,3 +317,70 @@ The most useful next steps are:
 - compare the best DQN setup across multiple seeds
 - decide whether DQN should be exposed in the pygame training UI
 - keep generated DQN checkpoints and plots out of version control unless explicitly needed
+
+---
+
+## 13. Route-Via-Charger Feature V2 And Long-Run Result
+
+The next DQN change added route-via-charger context directly to the feature encoder.
+
+The new feature version added:
+
+- safety-reserve-aware safe-dirty filtering
+- direct target route margin
+- current-route charger region
+- current to charger to target to charger route cost
+- post-charge feasibility and reroute-required flags
+- backward-compatible checkpoint loading for older DQN checkpoints
+
+The DQN training script was also extended with:
+
+- `--feature-version`
+
+and the local development workflow was cleaned up with:
+
+- `requirements-dev.txt`
+- `scripts/setup_dev.ps1`
+- `scripts/test.ps1`
+- `scripts/train_dqn.ps1`
+
+### Long-Run Evaluation
+
+The long run used:
+
+```bash
+python scripts/train_dqn.py --map-name complex_charge_bastion --battery-profile evaluation --episodes 10000 --seed 417 --print-every 500 --learning-rate 0.0005 --epsilon-decay 0.99995 --epsilon-min 0.10 --learning-starts 1000 --batch-size 128 --replay-capacity 100000 --train-every 8 --target-update-interval 1000 --hidden-size 256 --guided-exploration-ratio 0.6 --eval-episodes 50 --feature-version 2 --device cuda
+```
+
+### Result
+
+This did not improve the hardest map.
+
+Instead, the greedy policy regressed from:
+
+- `2/3` cleaned at `5000` episodes with the older feature set
+
+to:
+
+- `0/3` cleaned at `10000` episodes with feature version `2`
+
+The evaluation failure stayed:
+
+- `battery_depleted`
+
+but the rollout degraded earlier and never reached a dirty tile.
+
+### Interpretation
+
+This matters because it narrows the problem.
+
+The issue is no longer just "the model needs more charger-aware route context."
+The current route-via-charger feature bundle can destabilize learning under longer training.
+
+That means the next DQN iteration should focus on training stability, not just richer state features.
+
+The most likely follow-up changes are:
+
+- save and select the best evaluation checkpoint during training instead of only the final checkpoint
+- locate the episode range where feature version `2` starts to collapse
+- reduce or rebalance the new reroute features if they dominate the older useful signal

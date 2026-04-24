@@ -157,6 +157,41 @@ The shared Q-learning defaults are now tuned for harder charge-aware runs:
 
 Harder maps may still use longer runs such as `500000` episodes.
 
+## Development Setup
+
+The repository is easiest to use from PowerShell with the local `.venv`.
+
+Dependency files:
+
+- `requirements.txt`: runtime dependencies
+- `requirements-dev.txt`: runtime dependencies plus test tooling
+- `requirements-cuda.txt`: CUDA-specific PyTorch override
+
+Recommended Windows setup:
+
+```powershell
+.\scripts\setup_dev.ps1
+```
+
+CUDA setup:
+
+```powershell
+.\scripts\setup_dev.ps1 -Cuda
+```
+
+If you want the setup script to install `ripgrep` through `winget`:
+
+```powershell
+.\scripts\setup_dev.ps1 -InstallRipgrep
+```
+
+Useful wrappers after setup:
+
+```powershell
+.\scripts\test.ps1
+.\scripts\train_dqn.ps1 --map-name default --episodes 10
+```
+
 ## Checkpoints
 
 Q-learning checkpoint format:
@@ -196,6 +231,7 @@ Recent DQN experiments changed that picture slightly:
 - action masking removed invalid wall-action loops
 - guided exploration made dirty-reaching trajectories appear in replay memory
 - target dirty/charger context features improved greedy evaluation from `1/3` cleaned to `2/3` cleaned
+- a later route-via-charger feature version regressed under longer training and fell back to `0/3` cleaned at `10000` episodes on seed `417`
 
 The best current DQN result on `complex_charge_bastion` also plateaus at `2/3` cleaned under the evaluation battery profile.
 That mirrors the best tabular result, but reaches it through a different mechanism.
@@ -225,6 +261,7 @@ For a CUDA-capable environment, install the normal requirements first, then inst
 
 ```bash
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 pip install -r requirements-cuda.txt
 ```
 
@@ -252,6 +289,9 @@ SweepAgent/
 |   |-- gifs/
 |   |-- logs/
 |   `-- plots/
+|-- requirements-cuda.txt
+|-- requirements-dev.txt
+|-- requirements.txt
 |-- scripts/
 |   |-- benchmark_maps.py
 |   |-- compare_agents.py
@@ -259,7 +299,10 @@ SweepAgent/
 |   |-- render_comparison_gif.py
 |   |-- render_policy_gif.py
 |   |-- run_training_app.py
+|   |-- setup_dev.ps1
+|   |-- test.ps1
 |   |-- train_dqn.py
+|   |-- train_dqn.ps1
 |   |-- train_q_curriculum.py
 |   `-- train_q_learning.py
 |-- tests/
@@ -280,6 +323,12 @@ SweepAgent/
 
 ```bash
 python scripts/train_q_learning.py --map-name complex_charge_switchback --episodes 200000 --seed 42
+```
+
+PowerShell with the local virtual environment:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\train_q_learning.py --map-name complex_charge_switchback --episodes 200000 --seed 42
 ```
 
 ### Train abstracted Q-learning
@@ -316,6 +365,12 @@ That recipe preserved training-profile success and raised evaluation behavior to
 python scripts/train_dqn.py --map-name complex_charge_bastion --battery-profile evaluation --episodes 5000 --seed 417 --print-every 500 --learning-rate 0.0005 --epsilon-decay 0.99995 --epsilon-min 0.10 --learning-starts 1000 --batch-size 128 --replay-capacity 100000 --train-every 8 --target-update-interval 1000 --hidden-size 256 --guided-exploration-ratio 0.6 --eval-episodes 20
 ```
 
+PowerShell wrapper:
+
+```powershell
+.\scripts\train_dqn.ps1 --map-name complex_charge_bastion --battery-profile evaluation --episodes 5000 --seed 417 --print-every 500 --learning-rate 0.0005 --epsilon-decay 0.99995 --epsilon-min 0.10 --learning-starts 1000 --batch-size 128 --replay-capacity 100000 --train-every 8 --target-update-interval 1000 --hidden-size 256 --guided-exploration-ratio 0.6 --eval-episodes 20 --feature-version 2
+```
+
 The DQN implementation currently includes:
 
 - replay buffer training
@@ -324,9 +379,11 @@ The DQN implementation currently includes:
 - action masking for wall moves
 - optional guided exploration
 - map-derived state features for dirty, charger, battery, and route context
+- feature-versioned state encoding so older checkpoints can still load
 
 The best current DQN result on `complex_charge_bastion` reached `2/3` cleaned under the evaluation battery profile.
 Higher guided exploration ratios produced more dirty-reaching training trajectories but did not improve greedy evaluation, so the current best setting keeps guidance at `0.6`.
+The newer `feature-version 2` route-via-charger experiment did not beat that baseline in long training and currently serves as an experimental branch rather than the default best recipe.
 
 ### Run batch training in parallel
 
@@ -362,6 +419,12 @@ python scripts/evaluate_agents.py --map-name complex_charge_switchback --episode
 python scripts/run_training_app.py
 ```
 
+### Run tests
+
+```powershell
+.\scripts\test.ps1
+```
+
 ### Run curriculum training
 
 ```bash
@@ -373,7 +436,8 @@ python scripts/train_q_curriculum.py --stage1-map charge_maze_medium --stage2-ma
 The current improvement areas are:
 
 - improving the final `complex_charge_bastion` transition from `2/3` cleaned to full success
-- adding route-via-charger context for the last remaining dirty tile
+- stabilizing route-via-charger DQN training so richer features do not collapse greedy evaluation
 - comparing DQN behavior across seeds instead of relying on one promising run
+- selecting the best evaluation checkpoint during DQN training instead of trusting the final epoch
 - deciding whether DQN should be integrated into the pygame UI
 - keeping generated checkpoints, plots, logs, and GIFs out of version control
