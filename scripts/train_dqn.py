@@ -268,6 +268,21 @@ def build_fresh_agent(args: argparse.Namespace, battery_capacity: int) -> DQNAge
     return DQNAgent(config=config, device=args.device)
 
 
+def apply_resume_training_overrides(agent: DQNAgent, args: argparse.Namespace) -> None:
+    agent.config.learning_rate = args.learning_rate
+    agent.config.discount_factor = args.discount_factor
+    agent.config.epsilon_decay = args.epsilon_decay
+    agent.config.epsilon_min = args.epsilon_min
+    agent.config.batch_size = args.batch_size
+    agent.config.learning_starts = args.learning_starts
+    agent.config.train_every = args.train_every
+    agent.config.target_update_interval = args.target_update_interval
+    agent.config.guided_exploration_ratio = args.guided_exploration_ratio
+
+    for param_group in agent.optimizer.param_groups:
+        param_group["lr"] = args.learning_rate
+
+
 def build_agent(args: argparse.Namespace, battery_capacity: int) -> DQNAgent:
     if not args.init_checkpoint:
         return build_fresh_agent(args=args, battery_capacity=battery_capacity)
@@ -292,6 +307,12 @@ def build_agent(args: argparse.Namespace, battery_capacity: int) -> DQNAgent:
             f"Loaded checkpoint feature_version={agent.config.feature_version} does not "
             f"match --feature-version {args.feature_version}."
         )
+    if agent.config.hidden_size != args.hidden_size:
+        raise ValueError(
+            f"Loaded checkpoint hidden_size={agent.config.hidden_size} does not "
+            f"match --hidden-size {args.hidden_size}."
+        )
+    apply_resume_training_overrides(agent=agent, args=args)
     return agent
 
 
