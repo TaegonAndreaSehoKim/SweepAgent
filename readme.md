@@ -232,9 +232,16 @@ Recent DQN experiments changed that picture slightly:
 - guided exploration made dirty-reaching trajectories appear in replay memory
 - target dirty/charger context features improved greedy evaluation from `1/3` cleaned to `2/3` cleaned
 - a later route-via-charger feature version regressed under longer training and fell back to `0/3` cleaned at `10000` episodes on seed `417`
+- relay-aware charger guidance fixed the final charger-handoff failure in a resumed probe run and reached deterministic `3/3` cleaning under the evaluation battery profile
 
-The best current DQN result on `complex_charge_bastion` also plateaus at `2/3` cleaned under the evaluation battery profile.
-That mirrors the best tabular result, but reaches it through a different mechanism.
+The current best checked DQN result on `complex_charge_bastion` is now a relay-aware resumed run that reaches:
+
+- `avg_reward = -180.00`
+- `avg_steps = 222`
+- `avg_cleaned_ratio = 100.00%`
+- `success_rate = 100.00%`
+
+under the evaluation battery profile for seed `417`.
 
 ## Performance And CUDA Notes
 
@@ -281,7 +288,8 @@ SweepAgent/
 |       |-- week1.md
 |       |-- week2.md
 |       |-- week3.md
-|       `-- week4.md
+|       |-- week4.md
+|       `-- week5.md
 |-- env/
 |   `-- grid_clean_env.py
 |-- outputs/
@@ -387,12 +395,25 @@ The DQN implementation currently includes:
 - hard target-network updates
 - action masking for wall moves
 - optional guided exploration
+- relay-aware charger guidance when no dirty tile is directly battery-safe
 - map-derived state features for dirty, charger, battery, and route context
 - feature-versioned state encoding so older checkpoints can still load
 
-The best current DQN result on `complex_charge_bastion` reached `2/3` cleaned under the evaluation battery profile.
-Higher guided exploration ratios produced more dirty-reaching training trajectories but did not improve greedy evaluation, so the current best setting keeps guidance at `0.6`.
-The newer `feature-version 2` route-via-charger experiment did not beat that baseline in long training and currently serves as an experimental branch rather than the default best recipe.
+The previous `feature-version 2` route-via-charger branch could still plateau at `2/3` cleaned or regress under long training, even with best-eval checkpoint selection.
+The current best recovery path resumes from the earlier 1000-episode `v2best` best-eval checkpoint, keeps `guided_exploration_ratio = 0.6`, and relies on relay-aware charger guidance to unlock the final charger-to-charger transition.
+
+The focused probe command that first verified the fix was:
+
+```bash
+python scripts/train_dqn.py --map-name complex_charge_bastion --battery-profile evaluation --episodes 1000 --seed 417 --print-every 500 --init-checkpoint outputs/checkpoints/dqn_agent_complex_charge_bastion_best_eval_seed_417_v2best.pt --starting-checkpoint-episodes 1000 --learning-rate 0.0005 --epsilon-decay 0.99995 --epsilon-min 0.10 --learning-starts 1000 --batch-size 128 --replay-capacity 100000 --train-every 8 --target-update-interval 1000 --hidden-size 256 --guided-exploration-ratio 0.6 --eval-episodes 50 --eval-every 500 --feature-version 2 --device cuda --checkpoint-tag v2relayprobe --save-best-eval-checkpoint
+```
+
+This produced:
+
+- `dqn_agent_complex_charge_bastion_best_eval_seed_417_v2relayprobe.pt`
+- `dqn_agent_complex_charge_bastion_ep_2000_seed_417_v2relayprobe.pt`
+
+and the best checkpoint reproduced `100%` greedy success in both `50`-episode and `200`-episode reevaluation runs on CPU.
 
 ### Slice DQN checkpoints by episode
 
@@ -453,8 +474,8 @@ python scripts/train_q_curriculum.py --stage1-map charge_maze_medium --stage2-ma
 
 The current improvement areas are:
 
-- improving the final `complex_charge_bastion` transition from `2/3` cleaned to full success
-- stabilizing route-via-charger DQN training so richer features do not collapse greedy evaluation
+- deciding whether to promote the relay-aware DQN checkpoint as the new default `bastion` reference result
+- stabilizing longer route-via-charger DQN runs so the relay-aware improvement survives beyond the focused probe
 - comparing DQN behavior across seeds instead of relying on one promising run
 - deciding whether DQN should be integrated into the pygame UI
 - keeping generated checkpoints, plots, logs, and GIFs out of version control
