@@ -1,0 +1,50 @@
+# Session State
+
+Use this file as the handoff point between Codex sessions.
+
+At the start of a new chat, ask:
+- `Read AGENTS.md and docs/session_state.md, then continue from the saved state.`
+
+At the end of a task, ask:
+- `Update docs/session_state.md with the current status before we stop.`
+
+## Current Task
+- Goal: Monitor and continue the long DQN `v2best` run for `complex_charge_bastion`.
+- Current status: Relay-aware guided exploration was implemented and validated with a focused resume run from the 1000-episode `v2best` best-eval checkpoint. The new probe run reached cumulative episode 2000 and produced a checkpoint that solves `complex_charge_bastion` consistently under evaluation.
+- Priority: Decide whether to promote the relay-aware change into a longer/full DQN run or stop after capturing the improvement evidence.
+
+## Working Context
+- Relevant files: `scripts/train_dqn.py`, `utils/dqn_experiment_utils.py`, `agents/dqn_agent.py`, `outputs/checkpoints/dqn_agent_complex_charge_bastion_best_eval_seed_417_v2best.pt`, `outputs/checkpoints/dqn_agent_complex_charge_bastion_ep_10000_seed_417_v2best.pt`, `outputs/checkpoints/dqn_agent_complex_charge_bastion_best_eval_seed_417_v2relayprobe.pt`, `outputs/checkpoints/dqn_agent_complex_charge_bastion_ep_2000_seed_417_v2relayprobe.pt`, `outputs/logs/dqn_best_eval_complex_charge_bastion_ep_10000_seed_417_v2best.out.log`, `outputs/logs/dqn_best_eval_complex_charge_bastion_ep_10000_seed_417_v2best.err.log`, `outputs/logs/dqn_best_eval_complex_charge_bastion_ep_10000_seed_417_v2best_resume1000.out.log`, `outputs/logs/dqn_best_eval_complex_charge_bastion_ep_10000_seed_417_v2best_resume1000.err.log`, `outputs/logs/dqn_best_eval_complex_charge_bastion_ep_10000_seed_417_v2best_resume1000_diag.out.log`, `outputs/logs/dqn_best_eval_complex_charge_bastion_ep_10000_seed_417_v2best_resume1000_diag.err.log`, `outputs/logs/codex_dqn_bastion_v2best_resume_1000_launch.ps1`, `outputs/plots/dqn_training_reward_complex_charge_bastion.png`, `outputs/plots/dqn_training_cleaned_ratio_complex_charge_bastion.png`, `outputs/plots/dqn_training_success_complex_charge_bastion.png`, `outputs/plots/dqn_training_epsilon_complex_charge_bastion.png`, `outputs/plots/dqn_training_loss_complex_charge_bastion.png`
+- Commands already run: Checked scheduled-task status, tailed original logs, confirmed best checkpoint creation, inspected resume semantics in `train_dqn.py`, created a detached launcher, relaunched training from the best-eval checkpoint with `--starting-checkpoint-episodes 1000`, and on 2026-04-27 launched a fresh diagnostic resume when no active process remained.
+- Validation completed: Confirmed the resumed run wrote the expected header including `resume_best_eval: checkpoint_episodes=1000 | avg_reward=-231.00 | avg_steps=117.00 | avg_cleaned_ratio=33.33% | success_rate=0.00%`. Confirmed on 2026-04-27 that the old 2026-04-24 resume was not running, the best-eval checkpoint timestamp had not advanced, and a new active Python training process existed for the same resume command. Waited through completion of the 2026-04-27 resume and confirmed the run finished cleanly with a final checkpoint, plots, and an updated best-eval checkpoint. Re-evaluated both the saved `best_eval` and final `ep_10000` checkpoints on CPU with fixed RNG seed and reproduced the saved metrics exactly. Traced both greedy rollouts step by step, including recharge events and dirty-tile clean events. Updated `agents/dqn_agent.py` so `guided_action()` now prefers a relay charger that unlocks reachable remaining dirty tiles instead of blindly minimizing distance to the nearest charger when no dirty tile is currently safe. Ran a focused 1000-episode relay probe (`checkpoint_tag=v2relayprobe`) from the old 1000-episode `v2best` best checkpoint and observed `eval@2000: avg_reward=-180.00 | avg_steps=222.00 | avg_cleaned_ratio=100.00% | success_rate=100.00%`, then reproduced that result on CPU for both 50 and 200 evaluation episodes.
+- Validation not run: No post-training rollout inspection or UI playback check yet for the completed `v2best` checkpoints.
+
+## Decisions
+- Resume from `dqn_agent_complex_charge_bastion_best_eval_seed_417_v2best.pt` instead of restarting from scratch.
+- Use a detached PowerShell launcher under `outputs/logs/` because the earlier interactive scheduled task was being terminated by a window-close event.
+- Pass `--starting-checkpoint-episodes 1000` explicitly because the best-eval checkpoint filename does not encode episode count.
+- Keep the resulting best-eval checkpoint chosen by the existing comparison logic even though its average reward is worse than earlier evaluations, because the current ranking prioritizes success rate and cleaned ratio before reward.
+
+## Open Questions
+- Does the current best-eval ranking rule reflect the intended objective for `complex_charge_bastion`, given that the new relay-aware probe already dominates the old checkpoints on both success and cleaned ratio?
+- Is a longer/full rerun from the same 1000-episode checkpoint still useful, or is the 2000-episode relay-aware checkpoint already the practical winner for this map/seed?
+
+## Next Steps
+1. Compare the new `v2relayprobe` checkpoint against the old `v2best` checkpoints in playback/GIF form if a visual artifact is needed.
+2. Decide whether to promote the relay-aware training result as the new reference checkpoint or run a longer experiment under a new tag.
+3. If another long run is needed, reuse the detached launcher approach instead of the earlier interactive scheduled-task path.
+
+## Notes For Future Sessions
+- Preserve checkpoint naming compatibility.
+- Keep CLI entry points thin and reusable logic outside `scripts/`.
+- Treat `outputs/` as generated artifacts unless the task is specifically about them.
+
+## Last Updated
+- 2026-04-24: Created persistent session handoff template.
+- 2026-04-24: Saved the `v2best` resume state after detached relaunch from the 1000-episode best-eval checkpoint.
+- 2026-04-27: Verified the 2026-04-24 resume was no longer active, then launched a fresh resume from the same 1000-episode best-eval checkpoint and confirmed the process is running under `resume1000_diag` logs.
+- 2026-04-27: Observed the fresh `resume1000_diag` run complete through cumulative episode 10000. Best-eval updated at cumulative episodes 1500 and 6000, with the final selected best checkpoint saved at 6000 and the final full checkpoint saved at 10000.
+- 2026-04-27: Compared `best_eval` against `ep_10000` directly. `best_eval` reproduces `avg_reward=-1125.50`, `avg_steps=588`, `avg_cleaned_ratio=66.67%`, `success_rate=0%`; `ep_10000` reproduces `avg_reward=-913.50`, `avg_steps=588`, `avg_cleaned_ratio=33.33%`, `success_rate=0%`. The two policies first diverge at step 42; `best_eval` cleans a second tile at step 98 while `ep_10000` never does.
+- 2026-04-27: Traced recharge behavior and found both policies do recharge repeatedly. `best_eval` recharges 10 times at the upper charger and cleans tiles at steps 39 and 98 before looping; `ep_10000` recharges 11 times at the same upper charger and cleans only the first tile. A state-search sanity check confirmed the map is solvable at battery 65 via `R -> D(top-right) -> C(upper) -> D(bottom-right) -> C(upper) -> C(lower) -> D(left)`. This suggests the DQN representation/guidance is missing the charger-to-charger relay pattern needed for the last dirty tile.
+- 2026-04-27: Implemented relay-aware guided exploration in `agents/dqn_agent.py`. In states where no dirty tile is directly safe, `guided_action()` now picks a reachable charger that maximizes future safe-dirty reachability after recharge rather than drifting toward the nearest charger. Verified with a focused check that state `(row=5, col=15, cleaned_mask=5, battery=65)` selects the lower charger `(15, 10)` as the relay target and chooses a move that starts that transfer.
+- 2026-04-27: Verified the relay-aware change empirically with a new probe run tagged `v2relayprobe`, resumed from the old 1000-episode `v2best` best checkpoint for 1000 more episodes. The resulting `dqn_agent_complex_charge_bastion_best_eval_seed_417_v2relayprobe.pt` solves the map deterministically in evaluation: `avg_reward=-180.00`, `avg_steps=222`, `avg_cleaned_ratio=100%`, `success_rate=100%`. A traced greedy rollout cleaned tiles at steps 39, 100, and 222, with recharge sequence at upper charger, upper charger, upper charger, then lower charger before the final left-side dirty tile.

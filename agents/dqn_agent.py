@@ -414,6 +414,66 @@ class StateFeatureEncoder:
 
         return best_charger_id
 
+    def _best_relay_charger_id(
+        self,
+        row: int,
+        col: int,
+        cleaned_mask: int,
+        battery_remaining: int,
+    ) -> int:
+        best_charger_id = -1
+        best_score: tuple[int, int, int, int, int] | None = None
+
+        for charger_id, distance_map in enumerate(self.charger_distance_maps):
+            distance_to_charger = self._distance_from_map(distance_map, row, col)
+            if distance_to_charger < 0 or distance_to_charger > battery_remaining:
+                continue
+
+            charger_row, charger_col = self.charger_positions[charger_id]
+            reachable_dirty_count = 0
+            best_route_cost = -1
+            best_target_distance = -1
+
+            for dirty_idx, dirty_distance_map in enumerate(self.dirty_distance_maps):
+                if (cleaned_mask >> dirty_idx) & 1:
+                    continue
+
+                target_distance = self._distance_from_map(
+                    dirty_distance_map,
+                    charger_row,
+                    charger_col,
+                )
+                if target_distance < 0:
+                    continue
+
+                dirty_row, dirty_col = self.dirty_positions[dirty_idx]
+                recovery_distance = self._nearest_charger_distance(dirty_row, dirty_col)
+                route_cost = self._safe_route_cost(target_distance, recovery_distance)
+                if route_cost < 0 or route_cost > self.battery_capacity:
+                    continue
+
+                reachable_dirty_count += 1
+                if best_route_cost == -1 or route_cost < best_route_cost:
+                    best_route_cost = route_cost
+                if best_target_distance == -1 or target_distance < best_target_distance:
+                    best_target_distance = target_distance
+
+            if reachable_dirty_count == 0:
+                continue
+
+            score = (
+                -reachable_dirty_count,
+                best_route_cost,
+                distance_to_charger,
+                best_target_distance,
+                charger_id,
+            )
+            if best_score is None or score < best_score:
+                best_score = score
+                best_charger_id = charger_id
+
+        return best_charger_id
+
     def _route_safety_reserve(self) -> int:
         if self.feature_version == self.FEATURE_VERSION_LEGACY:
             return 0
@@ -680,6 +740,8 @@ class StateFeatureEncoder:
         if not valid_actions:
             return None
 
+        target_kind = "charger"
+        relay_charger_id = -1
         charger_distance = self._nearest_charger_distance(row, col)
         if (
             charger_distance >= 0
@@ -694,7 +756,14 @@ class StateFeatureEncoder:
         ) >= 0:
             target_kind = "dirty"
         else:
-            target_kind = "charger"
+            relay_charger_id = self._best_relay_charger_id(
+                row=row,
+                col=col,
+                cleaned_mask=cleaned_mask,
+                battery_remaining=battery_remaining,
+            )
+            if relay_charger_id >= 0:
+                target_kind = "relay_charger"
 
         best_actions: list[int] = []
         best_distance = -1
@@ -710,6 +779,12 @@ class StateFeatureEncoder:
                     next_col,
                     cleaned_mask,
                     max(0, battery_remaining - 1),
+                )
+            elif target_kind == "relay_charger":
+                distance = self._distance_from_map(
+                    self.charger_distance_maps[relay_charger_id],
+                    next_row,
+                    next_col,
                 )
             else:
                 distance = self._nearest_charger_distance(next_row, next_col)
