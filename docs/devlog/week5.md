@@ -235,11 +235,103 @@ The project now has a concrete mechanism that can unlock the final `bastion` tra
 
 ---
 
+## 11. PPO Baseline
+
+After the DQN route-planning work, PPO was added as the next learning-family baseline.
+
+The PPO implementation uses:
+
+- the same map-derived feature encoder used by DQN
+- action masking for invalid moves
+- actor-critic networks
+- generalized advantage estimation
+- clipped PPO policy updates
+- entropy regularization
+- `.pt` checkpoint save/load
+- periodic evaluation and best-eval checkpoint selection
+
+The first useful result was on the small `default` map.
+A 3000-episode PPO run solved it reliably:
+
+- best eval at episode `1000`
+- `avg_reward = 95.00`
+- `avg_steps = 13`
+- `avg_cleaned_ratio = 100.00%`
+- `success_rate = 100.00%`
+
+That confirmed the implementation was capable of learning a simple cleaning task end to end.
+
+The harder charge maps were different.
+
+For `complex_charge_bastion`, a 5000-episode plain PPO run with evaluation battery never cleaned any dirty tile:
+
+- best eval at episode `2500`
+- `avg_reward = -156.50`
+- `avg_steps = 65`
+- `avg_cleaned_ratio = 0.00%`
+- `success_rate = 0.00%`
+
+For the intermediate `charge_maze_medium` map, plain PPO did better but still did not solve the task:
+
+- best eval at episode `3500`
+- `avg_reward = -81.00`
+- `avg_steps = 29`
+- `avg_cleaned_ratio = 33.33%`
+- `success_rate = 0.00%`
+
+The read is that PPO can learn the easy map and can find the first useful dirty tile on a medium charge map, but plain on-policy exploration is not enough for multi-dirty charger planning.
+
+---
+
+## 12. PPO Curriculum And Guided Warm-Start
+
+Two PPO support mechanisms were then added:
+
+- curriculum stages that mark selected dirty tiles as already cleaned
+- guided behavior-cloning warm-start from the existing encoder guidance
+
+The curriculum interface accepts dirty-tile index sets such as:
+
+- `2`
+- `1,2`
+- `full`
+
+and converts each stage into an environment reset configuration with the other dirty tiles precleaned.
+
+The guided warm-start collects state/action pairs from `guided_action()` and trains the PPO actor with a supervised negative log-probability objective before PPO rollouts begin.
+It can run once at the beginning or once per curriculum stage.
+
+A combined 5000-episode test on `charge_maze_medium` used:
+
+- stages: `2 -> 1,2 -> full`
+- stage episodes: `1500 / 1500 / 2000`
+- guided warm-start: `20` episodes per stage
+- PPO rollout steps: `2048`
+- update epochs: `4`
+- minibatch size: `256`
+- hidden size: `256`
+
+This did not improve the final result over plain PPO.
+
+Full-map greedy eval reached `1/3` cleaned at episodes `2500` and `3000`, but the final full-map stage regressed:
+
+- best eval at episode `2500`
+- `avg_reward = -83.00`
+- `avg_steps = 29`
+- `avg_cleaned_ratio = 33.33%`
+- `success_rate = 0.00%`
+- final eval at episode `5000`: `0/3` cleaned
+
+The practical conclusion is that one-time warm-start is too weak.
+The next PPO attempt should probably mix imitation loss into PPO updates, increase full-map guided data, or add a stage-transition safeguard that prevents losing the best full-map behavior.
+
+---
+
 ## Next Steps
 
 The most useful next steps from here are:
 
-- decide whether to promote the relay-aware probe checkpoint as the new `bastion` reference result
-- test whether the same relay-aware guidance works across more seeds
-- run a longer follow-up under a separate tag to check whether full success survives longer training
-- decide whether additional reward shaping is still necessary now that relay guidance works
+- treat the relay-aware DQN seed `418` result as the current strongest `bastion` reference
+- strengthen PPO beyond one-time guided warm-start before spending more long runs on `bastion`
+- add SARSA after PPO stabilizes enough for a fair comparison table
+- keep generated checkpoints, plots, logs, and GIFs out of version control

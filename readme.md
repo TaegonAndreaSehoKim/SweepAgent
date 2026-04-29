@@ -11,8 +11,9 @@ SweepAgent currently includes:
 - a random baseline agent
 - a tabular `QLearningAgent`
 - a PyTorch-based `DQNAgent`
+- a PyTorch-based `PPOAgent`
 - JSON checkpoint save/load support
-- DQN `.pt` checkpoint save/load support
+- DQN/PPO `.pt` checkpoint save/load support
 - shared experiment builders and checkpoint helpers
 - benchmark, evaluation, comparison, and rendering scripts
 - a pygame training/playback UI
@@ -51,9 +52,10 @@ Implemented agents:
 - `RandomAgent`
 - `QLearningAgent`
 - `DQNAgent`
+- `PPOAgent`
 
 Checkpoints are reused across training, evaluation, comparison, GIF rendering, and UI playback.
-The DQN workflow is currently script-driven and is not yet integrated into the pygame UI.
+The DQN and PPO workflows are currently script-driven and are not yet integrated into the pygame UI.
 
 ### Training UI
 
@@ -213,6 +215,15 @@ Examples:
 - `dqn_agent_complex_charge_bastion_ep_5000_seed_416.pt`
 - `dqn_agent_complex_charge_bastion_ep_5000_seed_417.pt`
 
+PPO checkpoint format:
+
+`ppo_agent_<map_name>_ep_<episodes>_seed_<seed>.pt`
+
+Examples:
+
+- `ppo_agent_default_best_eval_seed_42_ppo3000.pt`
+- `ppo_agent_charge_maze_medium_best_eval_seed_42_ppo_curriculum_guided5000.pt`
+
 ## Recent Results
 
 The recent tuning cycle materially improved the hardest maps.
@@ -234,14 +245,23 @@ Recent DQN experiments changed that picture slightly:
 - a later route-via-charger feature version regressed under longer training and fell back to `0/3` cleaned at `10000` episodes on seed `417`
 - relay-aware charger guidance fixed the final charger-handoff failure in a resumed probe run and reached deterministic `3/3` cleaning under the evaluation battery profile
 
-The current best checked DQN result on `complex_charge_bastion` is now a relay-aware resumed run that reaches:
+The current best checked DQN result on `complex_charge_bastion` is now a relay-aware seed `418` run that reaches:
 
-- `avg_reward = -180.00`
-- `avg_steps = 222`
+- `avg_reward = -83.50`
+- `avg_steps = 168`
 - `avg_cleaned_ratio = 100.00%`
 - `success_rate = 100.00%`
 
-under the evaluation battery profile for seed `417`.
+under the evaluation battery profile.
+
+PPO has also been added as a policy-gradient baseline:
+
+- on `default`, PPO solves the map within a 3000-episode run
+- on `charge_maze_medium`, plain PPO reaches `1/3` greedy cleaned ratio after 5000 episodes but not full success
+- on `complex_charge_bastion`, plain PPO remains at `0/3` cleaned after 5000 episodes
+- curriculum plus guided behavior-cloning warm-start was tested on `charge_maze_medium`, but it still only reached `1/3` at best and regressed to `0/3` by the final full-map stage
+
+The practical read is that PPO is now runnable and test-covered, but it is not yet competitive with the relay-aware DQN recipe on charge-planning maps.
 
 ## Performance And CUDA Notes
 
@@ -279,6 +299,7 @@ SweepAgent/
 |-- README.md
 |-- agents/
 |   |-- dqn_agent.py
+|   |-- ppo_agent.py
 |   |-- q_learning_agent.py
 |   `-- random_agent.py
 |-- configs/
@@ -311,10 +332,13 @@ SweepAgent/
 |   |-- test.ps1
 |   |-- train_dqn.py
 |   |-- train_dqn.ps1
+|   |-- train_ppo.py
 |   |-- train_q_curriculum.py
 |   `-- train_q_learning.py
 |-- tests/
-|   `-- test_dqn_agent.py
+|   |-- test_dqn_agent.py
+|   |-- test_ppo_agent.py
+|   `-- test_train_ppo.py
 |-- ui/
 |   |-- training_app_core.py
 |   |-- training_app_handlers.py
@@ -424,6 +448,18 @@ python scripts/train_dqn_sliced.py --map-name complex_charge_bastion --battery-p
 This workflow resumes DQN training across episode slices, saves one checkpoint per cumulative slice, and writes a CSV summary under `outputs/logs/` so the collapse window can be located without manually rerunning each cutoff.
 Use `--checkpoint-tag` for experimental branches such as `feature-version 2` so older DQN checkpoints with the same map, episode count, and seed are not overwritten.
 
+### Train PPO
+
+```bash
+python scripts/train_ppo.py --map-name default --battery-profile evaluation --episodes 3000 --seed 42 --rollout-steps 512 --update-epochs 4 --minibatch-size 128 --hidden-size 128 --eval-episodes 20 --eval-every 500 --save-best-eval-checkpoint --checkpoint-tag ppo3000
+```
+
+For staged charge-map experiments, PPO can preclean selected dirty tiles during curriculum stages and optionally run a guided behavior-cloning warm start before each stage:
+
+```bash
+python scripts/train_ppo.py --map-name charge_maze_medium --battery-profile evaluation --seed 42 --curriculum-stage-keep-dirty-indices 2 1,2 full --curriculum-stage-episodes 1500 1500 2000 --guided-warm-start-episodes 20 --guided-warm-start-epochs 2 --guided-warm-start-minibatch-size 256 --guided-warm-start-per-stage --rollout-steps 2048 --update-epochs 4 --minibatch-size 256 --hidden-size 256 --eval-episodes 20 --eval-every 500 --save-best-eval-checkpoint --checkpoint-tag ppo_curriculum_guided5000
+```
+
 ### Run batch training in parallel
 
 ```bash
@@ -474,8 +510,8 @@ python scripts/train_q_curriculum.py --stage1-map charge_maze_medium --stage2-ma
 
 The current improvement areas are:
 
-- deciding whether to promote the relay-aware DQN checkpoint as the new default `bastion` reference result
-- stabilizing longer route-via-charger DQN runs so the relay-aware improvement survives beyond the focused probe
-- comparing DQN behavior across seeds instead of relying on one promising run
+- using the relay-aware DQN seed `418` checkpoint as the current strongest `bastion` reference result
+- improving PPO beyond one-time guided warm-start, likely with mixed imitation loss during PPO updates or stronger full-map stage safeguards
+- adding SARSA so Q-learning, DQN, PPO, and SARSA can be compared under the same evaluation flow
 - deciding whether DQN should be integrated into the pygame UI
 - keeping generated checkpoints, plots, logs, and GIFs out of version control
