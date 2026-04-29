@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from agents.ppo_agent import PPOAgent, PPOConfig, PPORolloutStep
-from configs.map_presets import PRINT_EVERY
+from configs.map_presets import MAP_PRESETS, PRINT_EVERY
 from utils.experiment_utils import build_env
 from utils.ppo_experiment_utils import (
     ensure_ppo_output_dirs,
@@ -60,6 +60,42 @@ def parse_args() -> argparse.Namespace:
         default="training",
     )
     parser.add_argument("--battery-capacity-override", type=int, default=0)
+    parser.add_argument(
+        "--initial-cleaned-positions",
+        type=str,
+        default="",
+        help=(
+            "Optional semicolon-separated row,col positions to mark as already cleaned "
+            "at reset time. Example: '1,5;7,3'"
+        ),
+    )
+    parser.add_argument(
+        "--curriculum-stage-keep-dirty-indices",
+        nargs="*",
+        default=[],
+        help=(
+            "Optional curriculum stages. Each token is comma-separated dirty indices "
+            "to keep active, such as '2', '0,2', or 'full'."
+        ),
+    )
+    parser.add_argument(
+        "--curriculum-stage-episodes",
+        nargs="*",
+        type=int,
+        default=[],
+        help=(
+            "Episode counts for curriculum stages. Provide one shared value or one "
+            "value per --curriculum-stage-keep-dirty-indices token."
+        ),
+    )
+    parser.add_argument("--guided-warm-start-episodes", type=int, default=0)
+    parser.add_argument("--guided-warm-start-epochs", type=int, default=3)
+    parser.add_argument("--guided-warm-start-minibatch-size", type=int, default=256)
+    parser.add_argument(
+        "--guided-warm-start-per-stage",
+        action="store_true",
+        help="Run guided behavior-cloning warm-start at the start of every curriculum stage.",
+    )
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--eval-every", type=int, default=0)
     parser.add_argument("--save-best-eval-checkpoint", action="store_true")
@@ -93,6 +129,119 @@ def save_line_plot(
     plt.savefig(output_path)
     plt.close()
     return output_path
+
+
+def parse_initial_cleaned_positions(raw_value: str) -> list[tuple[int, int]]:
+    positions: list[tuple[int, int]] = []
+    if not raw_value.strip():
+        return positions
+    for token in raw_value.split(";"):
+        stripped = token.strip()
+        if not stripped:
+            continue
+        row_str, col_str = stripped.split(",", maxsplit=1)
+        positions.append((int(row_str), int(col_str)))
+    return positions
+
+
+def parse_stage_keep_spec(keep_spec: str, total_dirty_tiles: int) -> list[int]:
+    lowered = keep_spec.strip().lower()
+    if lowered == "full":
+        return list(range(total_dirty_tiles))
+
+    keep_indices: list[int] = []
+    for part in keep_spec.split(","):
+        stripped = part.strip()
+        if not stripped:
+            continue
+        idx = int(stripped)
+        if idx < 0 or idx >= total_dirty_tiles:
+            raise ValueError(
+                f"Dirty index {idx} is out of range for total_dirty_tiles={total_dirty_tiles}."
+            )
+        keep_indices.append(idx)
+
+    if not keep_indices:
+        raise ValueError(f"Invalid stage keep spec: '{keep_spec}'")
+    return sorted(set(keep_indices))
+
+
+def build_precleaned_positions(
+    map_name: str,
+    keep_indices: list[int],
+) -> list[tuple[int, int]]:
+    preset = MAP_PRESETS[map_name]
+    dirty_positions: list[tuple[int, int]] = []
+    for row_idx, row in enumerate(preset["grid_map"]):
+        for col_idx, cell in enumerate(row):
+            if cell == "D":
+                dirty_positions.append((row_idx, col_idx))
+
+    return [
+        position
+        for idx, position in enumerate(dirty_positions)
+        if idx not in keep_indices
+    ]
+
+
+def normalize_stage_episodes(
+    stage_episodes: list[int],
+    stage_count: int,
+) -> list[int]:
+    if not stage_episodes:
+        raise ValueError("--curriculum-stage-episodes is required for curriculum runs.")
+    if len(stage_episodes) == 1:
+        return stage_episodes * stage_count
+    if len(stage_episodes) != stage_count:
+        raise ValueError(
+            "curriculum stage episode count must be either 1 value or match the "
+            "number of stages."
+        )
+    return stage_episodes
+
+
+def build_training_stages(
+    args: argparse.Namespace,
+) -> list[tuple[str, int, list[tuple[int, int]]]]:
+    stage_specs = args.curriculum_stage_keep_dirty_indices
+    if not stage_specs:
+        return [
+            (
+                "single",
+                args.episodes,
+                parse_initial_cleaned_positions(args.initial_cleaned_positions),
+            )
+        ]
+
+    if args.initial_cleaned_positions:
+        raise ValueError(
+            "--initial-cleaned-positions cannot be combined with curriculum stages."
+        )
+
+    preset = MAP_PRESETS[args.map_name]
+    total_dirty_tiles = sum(row.count("D") for row in preset["grid_map"])
+    if total_dirty_tiles == 0:
+        raise ValueError(f"Map '{args.map_name}' has no dirty tiles for curriculum.")
+
+    keep_indices_by_stage = [
+        parse_stage_keep_spec(spec, total_dirty_tiles)
+        for spec in stage_specs
+    ]
+    episodes_by_stage = normalize_stage_episodes(
+        stage_episodes=args.curriculum_stage_episodes,
+        stage_count=len(stage_specs),
+    )
+    return [
+        (
+            f"stage_{stage_idx}_keep_{','.join(str(idx) for idx in keep_indices)}",
+            episodes,
+            build_precleaned_positions(args.map_name, keep_indices),
+        )
+        for stage_idx, (keep_indices, episodes) in enumerate(
+            zip(keep_indices_by_stage, episodes_by_stage),
+            start=1,
+        )
+    ]
 
 
 def build_fresh_agent(args: argparse.Namespace, battery_capacity: int) -> PPOAgent:
@@ -249,16 +398,58 @@ def finalize_rollout_update(
     return agent.update(rollout=rollout, last_value=last_value)
 
 
+def run_guided_warm_start(
+    agent: PPOAgent,
+    env,
+    episodes: int,
+    epochs: int,
+    minibatch_size: int,
+) -> dict[str, float]:
+    if episodes <= 0:
+        return {"bc_loss": 0.0, "bc_entropy": 0.0, "samples": 0.0}
+
+    states = []
+    actions: list[int] = []
+    was_training = agent.network.training
+    agent.network.train()
+
+    for _ in range(episodes):
+        state = env.reset()
+        done = False
+
+        while not done:
+            guided_action = agent.encoder.guided_action(state)
+            if guided_action is None:
+                guided_action = agent.get_policy_action(state)
+            next_state, _, done, _ = env.step(guided_action)
+            states.append(state)
+            actions.append(guided_action)
+            state = next_state
+
+    metrics = agent.behavior_clone_update(
+        states=states,
+        actions=actions,
+        epochs=epochs,
+        minibatch_size=minibatch_size,
+    )
+    metrics["samples"] = float(len(states))
+    if not was_training:
+        agent.network.eval()
+    return metrics
+
+
 def main() -> None:
     args = parse_args()
-    env = build_env(
+    training_stages = build_training_stages(args)
+    total_training_episodes = sum(stage_episodes for _, stage_episodes, _ in training_stages)
+    base_env = build_env(
         map_name=args.map_name,
         battery_profile=args.battery_profile,
         battery_capacity_override=(
             args.battery_capacity_override if args.battery_capacity_override > 0 else None
         ),
     )
-    if env.battery_capacity is None:
+    if base_env.battery_capacity is None:
         raise ValueError("PPO training requires a battery-enabled map preset.")
 
     starting_checkpoint_episodes = infer_ppo_checkpoint_episodes(
@@ -268,11 +459,11 @@ def main() -> None:
     checkpoint_episodes = (
         args.checkpoint_episodes
         if args.checkpoint_episodes > 0
-        else starting_checkpoint_episodes + args.episodes
+        else starting_checkpoint_episodes + total_training_episodes
     )
-    cumulative_episodes = starting_checkpoint_episodes + args.episodes
+    cumulative_episodes = starting_checkpoint_episodes + total_training_episodes
 
-    agent = build_agent(args=args, battery_capacity=env.battery_capacity)
+    agent = build_agent(args=args, battery_capacity=base_env.battery_capacity)
     _, plot_dir, _ = ensure_ppo_output_dirs()
     checkpoint_path = get_ppo_checkpoint_path(
         map_name=args.map_name,
@@ -303,7 +494,7 @@ def main() -> None:
     rollout: list[PPORolloutStep] = []
 
     print(f"Training PPO agent on map='{args.map_name}'...")
-    print(f"episodes: {args.episodes}")
+    print(f"episodes: {total_training_episodes}")
     print(f"checkpoint_episodes: {checkpoint_episodes}")
     print(f"cumulative_episodes: {cumulative_episodes}")
     print(f"seed: {args.seed}")
@@ -323,114 +514,159 @@ def main() -> None:
     print(f"hidden_size: {agent.config.hidden_size}")
     print(f"feature_version: {agent.config.feature_version}")
     print(f"battery_profile: {args.battery_profile}")
-    print(f"battery_capacity: {env.battery_capacity}")
+    print(f"battery_capacity: {base_env.battery_capacity}")
+    print(
+        "training_stages: "
+        + ", ".join(
+            f"{stage_name}:{stage_episodes}"
+            for stage_name, stage_episodes, _ in training_stages
+        )
+    )
+    print(f"guided_warm_start_episodes: {args.guided_warm_start_episodes}")
     print(f"eval_episodes: {args.eval_episodes}")
     print(f"eval_every: {args.eval_every}")
     print(f"save_best_eval_checkpoint: {args.save_best_eval_checkpoint}")
     if best_checkpoint_path is not None:
         print(f"best_checkpoint_path: {best_checkpoint_path}")
 
-    state = env.reset()
-    done = False
-    episode_reward = 0.0
-    episode_steps = 0
-    termination_reason = "ongoing"
+    global_episode_idx = 0
+    for stage_idx, (stage_name, stage_episodes, precleaned_positions) in enumerate(
+        training_stages,
+        start=1,
+    ):
+        env = build_env(
+            map_name=args.map_name,
+            battery_profile=args.battery_profile,
+            battery_capacity_override=(
+                args.battery_capacity_override if args.battery_capacity_override > 0 else None
+            ),
+            initial_cleaned_positions=precleaned_positions,
+        )
+        print(
+            f"\n--- PPO Stage {stage_idx}/{len(training_stages)} | "
+            f"{stage_name} | episodes={stage_episodes} | "
+            f"precleaned_positions={precleaned_positions if precleaned_positions else 'none'} ---"
+        )
 
-    for episode_idx in range(1, args.episodes + 1):
-        while not done:
-            action, log_prob, value = agent.select_action(state, training=True)
-            next_state, reward, done, termination_reason = env.step_training(action)
-            rollout.append(
-                PPORolloutStep(
-                    state=state,
-                    action=action,
-                    reward=reward,
-                    done=done,
-                    log_prob=log_prob,
-                    value=value,
-                )
-            )
-            state = next_state
-            episode_reward += reward
-            episode_steps += 1
-
-            if len(rollout) >= args.rollout_steps:
-                metrics = finalize_rollout_update(
-                    agent=agent,
-                    rollout=rollout,
-                    state=state,
-                )
-                losses.append(metrics["loss"])
-                entropies.append(metrics["entropy"])
-                rollout = []
-
-        final_info = env.get_episode_info(termination_reason=termination_reason)
-        rewards.append(episode_reward)
-        cleaned_ratios.append(float(final_info["cleaned_ratio"]))
-        successes.append(1.0 if float(final_info["cleaned_ratio"]) == 1.0 else 0.0)
-        steps_taken.append(float(final_info["steps_taken"]))
-
-        if episode_idx % args.print_every == 0 or episode_idx == args.episodes:
-            start_idx = max(0, len(rewards) - args.print_every)
-            recent_losses = losses[-max(1, min(len(losses), args.print_every)) :]
-            recent_entropies = entropies[-max(1, min(len(entropies), args.print_every)) :]
-            print(
-                f"Episode {episode_idx}/{args.episodes} | "
-                f"avg_reward={mean(rewards[start_idx:]):.2f} | "
-                f"avg_cleaned_ratio={mean(cleaned_ratios[start_idx:]) * 100:.2f}% | "
-                f"success_rate={mean(successes[start_idx:]) * 100:.2f}% | "
-                f"avg_steps={mean(steps_taken[start_idx:]):.2f} | "
-                f"loss={(mean(recent_losses) if recent_losses else 0.0):.4f} | "
-                f"entropy={(mean(recent_entropies) if recent_entropies else 0.0):.4f}"
-            )
-
-        if (
-            args.eval_episodes > 0
-            and args.eval_every > 0
-            and episode_idx % args.eval_every == 0
+        if args.guided_warm_start_episodes > 0 and (
+            stage_idx == 1 or args.guided_warm_start_per_stage
         ):
-            current_eval_checkpoint_episodes = starting_checkpoint_episodes + episode_idx
-            eval_result = evaluate_ppo_agent(
-                map_name=args.map_name,
-                eval_episodes=args.eval_episodes,
+            warm_start_metrics = run_guided_warm_start(
                 agent=agent,
-                battery_capacity_override=(
-                    args.battery_capacity_override if args.battery_capacity_override > 0 else None
-                ),
+                env=env,
+                episodes=args.guided_warm_start_episodes,
+                epochs=args.guided_warm_start_epochs,
+                minibatch_size=args.guided_warm_start_minibatch_size,
             )
             print(
-                f"eval@{current_eval_checkpoint_episodes}: "
-                f"{format_ppo_eval_result(eval_result)}"
+                "guided_warm_start: "
+                f"samples={warm_start_metrics['samples']:.0f} | "
+                f"bc_loss={warm_start_metrics['bc_loss']:.4f} | "
+                f"entropy={warm_start_metrics['bc_entropy']:.4f}"
             )
-            if is_better_ppo_eval_result(eval_result, best_eval_result):
-                best_eval_result = eval_result
-                best_checkpoint_episodes = current_eval_checkpoint_episodes
-                print(
-                    "best_eval_updated: "
-                    f"checkpoint_episodes={best_checkpoint_episodes} | "
-                    f"{format_ppo_eval_result(best_eval_result)}"
-                )
-                if best_checkpoint_path is not None:
-                    agent.save(
-                        best_checkpoint_path,
-                        metadata=build_checkpoint_metadata(
-                            args=args,
-                            checkpoint_episodes=best_checkpoint_episodes,
-                            cumulative_episodes=current_eval_checkpoint_episodes,
-                            starting_checkpoint_episodes=starting_checkpoint_episodes,
-                            eval_result=eval_result,
-                            best_eval_result=best_eval_result,
-                            best_checkpoint_episodes=best_checkpoint_episodes,
-                            best_checkpoint_path=best_checkpoint_path,
-                            is_best_eval_checkpoint=True,
-                        ),
-                    )
 
-        state = env.reset()
-        done = False
-        episode_reward = 0.0
-        episode_steps = 0
-        termination_reason = "ongoing"
+        for _ in range(stage_episodes):
+            global_episode_idx += 1
+            state = env.reset()
+            done = False
+            episode_reward = 0.0
+            termination_reason = "ongoing"
+
+            while not done:
+                action, log_prob, value = agent.select_action(state, training=True)
+                next_state, reward, done, termination_reason = env.step_training(action)
+                rollout.append(
+                    PPORolloutStep(
+                        state=state,
+                        action=action,
+                        reward=reward,
+                        done=done,
+                        log_prob=log_prob,
+                        value=value,
+                    )
+                )
+                state = next_state
+                episode_reward += reward
+
+                if len(rollout) >= args.rollout_steps:
+                    metrics = finalize_rollout_update(
+                        agent=agent,
+                        rollout=rollout,
+                        state=state,
+                    )
+                    losses.append(metrics["loss"])
+                    entropies.append(metrics["entropy"])
+                    rollout = []
+
+            final_info = env.get_episode_info(termination_reason=termination_reason)
+            rewards.append(episode_reward)
+            cleaned_ratios.append(float(final_info["cleaned_ratio"]))
+            successes.append(1.0 if float(final_info["cleaned_ratio"]) == 1.0 else 0.0)
+            steps_taken.append(float(final_info["steps_taken"]))
+
+            if (
+                global_episode_idx % args.print_every == 0
+                or global_episode_idx == total_training_episodes
+            ):
+                start_idx = max(0, len(rewards) - args.print_every)
+                recent_losses = losses[-max(1, min(len(losses), args.print_every)) :]
+                recent_entropies = entropies[-max(1, min(len(entropies), args.print_every)) :]
+                print(
+                    f"Episode {global_episode_idx}/{total_training_episodes} | "
+                    f"stage={stage_name} | "
+                    f"avg_reward={mean(rewards[start_idx:]):.2f} | "
+                    f"avg_cleaned_ratio={mean(cleaned_ratios[start_idx:]) * 100:.2f}% | "
+                    f"success_rate={mean(successes[start_idx:]) * 100:.2f}% | "
+                    f"avg_steps={mean(steps_taken[start_idx:]):.2f} | "
+                    f"loss={(mean(recent_losses) if recent_losses else 0.0):.4f} | "
+                    f"entropy={(mean(recent_entropies) if recent_entropies else 0.0):.4f}"
+                )
+
+            if (
+                args.eval_episodes > 0
+                and args.eval_every > 0
+                and global_episode_idx % args.eval_every == 0
+            ):
+                current_eval_checkpoint_episodes = (
+                    starting_checkpoint_episodes + global_episode_idx
+                )
+                eval_result = evaluate_ppo_agent(
+                    map_name=args.map_name,
+                    eval_episodes=args.eval_episodes,
+                    agent=agent,
+                    battery_capacity_override=(
+                        args.battery_capacity_override
+                        if args.battery_capacity_override > 0
+                        else None
+                    ),
+                )
+                print(
+                    f"eval@{current_eval_checkpoint_episodes}: "
+                    f"{format_ppo_eval_result(eval_result)}"
+                )
+                if is_better_ppo_eval_result(eval_result, best_eval_result):
+                    best_eval_result = eval_result
+                    best_checkpoint_episodes = current_eval_checkpoint_episodes
+                    print(
+                        "best_eval_updated: "
+                        f"checkpoint_episodes={best_checkpoint_episodes} | "
+                        f"{format_ppo_eval_result(best_eval_result)}"
+                    )
+                    if best_checkpoint_path is not None:
+                        agent.save(
+                            best_checkpoint_path,
+                            metadata=build_checkpoint_metadata(
+                                args=args,
+                                checkpoint_episodes=best_checkpoint_episodes,
+                                cumulative_episodes=current_eval_checkpoint_episodes,
+                                starting_checkpoint_episodes=starting_checkpoint_episodes,
+                                eval_result=eval_result,
+                                best_eval_result=best_eval_result,
+                                best_checkpoint_episodes=best_checkpoint_episodes,
+                                best_checkpoint_path=best_checkpoint_path,
+                                is_best_eval_checkpoint=True,
+                            ),
+                        )
 
     if rollout:
         metrics = finalize_rollout_update(

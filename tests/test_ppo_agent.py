@@ -65,6 +65,28 @@ def test_ppo_update_changes_optimization_step_count() -> None:
     assert metrics["loss"] != 0.0
 
 
+def test_ppo_behavior_clone_update_changes_optimization_step_count() -> None:
+    agent = PPOAgent(
+        config=PPOConfig(
+            map_name="default",
+            battery_capacity=17,
+            hidden_size=16,
+            seed=42,
+        ),
+        device="cpu",
+    )
+
+    metrics = agent.behavior_clone_update(
+        states=[(1, 1, 0, 17), (2, 1, 0, 16)],
+        actions=[1, 3],
+        epochs=2,
+        minibatch_size=1,
+    )
+
+    assert agent.optimization_steps == 4
+    assert metrics["bc_loss"] > 0.0
+
+
 def test_ppo_checkpoint_round_trip(tmp_path) -> None:
     agent = PPOAgent(
         config=PPOConfig(

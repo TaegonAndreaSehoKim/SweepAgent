@@ -245,6 +245,55 @@ class PPOAgent:
             "entropy": sum(entropies) / len(entropies),
         }
 
+    def behavior_clone_update(
+        self,
+        states: list[State],
+        actions: list[int],
+        epochs: int,
+        minibatch_size: int,
+    ) -> dict[str, float]:
+        if not states:
+            return {"bc_loss": 0.0, "bc_entropy": 0.0}
+        if len(states) != len(actions):
+            raise ValueError("states and actions must have the same length.")
+
+        action_tensor = torch.tensor(
+            actions,
+            dtype=torch.int64,
+            device=self.device,
+        )
+        batch_size = len(states)
+        clamped_minibatch_size = min(max(1, minibatch_size), batch_size)
+        losses: list[float] = []
+        entropies: list[float] = []
+
+        for _ in range(max(1, epochs)):
+            permutation = torch.randperm(batch_size, device=self.device)
+            for start in range(0, batch_size, clamped_minibatch_size):
+                indices = permutation[start : start + clamped_minibatch_size]
+                batch_states = [states[int(idx)] for idx in indices.tolist()]
+                batch_actions = action_tensor[indices]
+                distribution, _ = self._distribution_and_value(batch_states)
+                entropy = distribution.entropy().mean()
+                loss = -distribution.log_prob(batch_actions).mean()
+
+                self.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                nn.utils.clip_grad_norm_(
+                    self.network.parameters(),
+                    self.config.max_grad_norm,
+                )
+                self.optimizer.step()
+
+                self.optimization_steps += 1
+                losses.append(float(loss.item()))
+                entropies.append(float(entropy.item()))
+
+        return {
+            "bc_loss": sum(losses) / len(losses),
+            "bc_entropy": sum(entropies) / len(entropies),
+        }
+
     def to_checkpoint(self, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
             "algorithm": "ppo",
