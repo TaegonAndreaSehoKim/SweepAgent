@@ -22,6 +22,8 @@ from configs.map_presets import (
     EPSILON_MIN,
     EPSILON_START,
     PRINT_EVERY,
+    PENALTY_MOVE_AWAY_FROM_RELAY_CHARGER,
+    REWARD_MOVE_TOWARD_RELAY_CHARGER,
     TRAIN_EPISODES,
 )
 from utils.dqn_experiment_utils import (
@@ -189,6 +191,24 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Optional explicit battery capacity override for the environment.",
+    )
+    parser.add_argument(
+        "--reward-move-toward-relay-charger",
+        type=float,
+        default=REWARD_MOVE_TOWARD_RELAY_CHARGER,
+        help=(
+            "Training reward added when no dirty tile is safely reachable and "
+            "the action moves toward a reachable relay charger."
+        ),
+    )
+    parser.add_argument(
+        "--penalty-move-away-from-relay-charger",
+        type=float,
+        default=PENALTY_MOVE_AWAY_FROM_RELAY_CHARGER,
+        help=(
+            "Training penalty added when no dirty tile is safely reachable and "
+            "the action moves away from the selected relay charger."
+        ),
     )
     parser.add_argument(
         "--eval-episodes",
@@ -375,6 +395,10 @@ def build_checkpoint_metadata(
         "checkpoint_tag": args.checkpoint_tag,
         "battery_profile": args.battery_profile,
         "battery_capacity_override": args.battery_capacity_override,
+        "reward_move_toward_relay_charger": args.reward_move_toward_relay_charger,
+        "penalty_move_away_from_relay_charger": (
+            args.penalty_move_away_from_relay_charger
+        ),
         "feature_version": args.feature_version,
         "eval_episodes": args.eval_episodes,
         "eval_every": args.eval_every,
@@ -423,6 +447,10 @@ def main() -> None:
         battery_profile=args.battery_profile,
         battery_capacity_override=(
             args.battery_capacity_override if args.battery_capacity_override > 0 else None
+        ),
+        reward_move_toward_relay_charger=args.reward_move_toward_relay_charger,
+        penalty_move_away_from_relay_charger=(
+            args.penalty_move_away_from_relay_charger
         ),
     )
     if env.battery_capacity is None:
@@ -493,6 +521,14 @@ def main() -> None:
     print(f"feature_version: {agent.config.feature_version}")
     print(f"battery_profile: {args.battery_profile}")
     print(f"battery_capacity: {env.battery_capacity}")
+    print(
+        "reward_move_toward_relay_charger: "
+        f"{args.reward_move_toward_relay_charger}"
+    )
+    print(
+        "penalty_move_away_from_relay_charger: "
+        f"{args.penalty_move_away_from_relay_charger}"
+    )
     print(f"eval_episodes: {args.eval_episodes}")
     print(f"eval_every: {args.eval_every}")
     print(f"save_best_eval_checkpoint: {args.save_best_eval_checkpoint}")

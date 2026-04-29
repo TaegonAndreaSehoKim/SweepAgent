@@ -348,7 +348,11 @@ class StateFeatureEncoder:
 
             dirty_row, dirty_col = self.dirty_positions[dirty_idx]
             dirty_to_charger = self._nearest_charger_distance(dirty_row, dirty_col)
-            route_cost = self._safe_route_cost(distance_to_dirty, dirty_to_charger)
+            route_cost = self._dirty_route_cost(
+                cleaned_mask,
+                distance_to_dirty,
+                dirty_to_charger,
+            )
             if route_cost < 0:
                 continue
             if route_cost > battery_remaining:
@@ -378,7 +382,11 @@ class StateFeatureEncoder:
 
             dirty_row, dirty_col = self.dirty_positions[dirty_idx]
             dirty_to_charger = self._nearest_charger_distance(dirty_row, dirty_col)
-            route_cost = self._safe_route_cost(distance_to_dirty, dirty_to_charger)
+            route_cost = self._dirty_route_cost(
+                cleaned_mask,
+                distance_to_dirty,
+                dirty_to_charger,
+            )
             if route_cost < 0:
                 continue
             if route_cost > battery_remaining:
@@ -422,13 +430,9 @@ class StateFeatureEncoder:
         battery_remaining: int,
     ) -> int:
         best_charger_id = -1
-        best_score: tuple[int, int, int, int, int] | None = None
+        best_score: tuple[int, int, int, int, int, int] | None = None
 
-        for charger_id, distance_map in enumerate(self.charger_distance_maps):
-            distance_to_charger = self._distance_from_map(distance_map, row, col)
-            if distance_to_charger < 0 or distance_to_charger > battery_remaining:
-                continue
-
+        def dirty_unlock_score(charger_id: int) -> tuple[int, int, int]:
             charger_row, charger_col = self.charger_positions[charger_id]
             reachable_dirty_count = 0
             best_route_cost = -1
@@ -448,7 +452,11 @@ class StateFeatureEncoder:
 
                 dirty_row, dirty_col = self.dirty_positions[dirty_idx]
                 recovery_distance = self._nearest_charger_distance(dirty_row, dirty_col)
-                route_cost = self._safe_route_cost(target_distance, recovery_distance)
+                route_cost = self._dirty_route_cost(
+                    cleaned_mask,
+                    target_distance,
+                    recovery_distance,
+                )
                 if route_cost < 0 or route_cost > self.battery_capacity:
                     continue
 
@@ -458,11 +466,67 @@ class StateFeatureEncoder:
                 if best_target_distance == -1 or target_distance < best_target_distance:
                     best_target_distance = target_distance
 
+            return reachable_dirty_count, best_route_cost, best_target_distance
+
+        for charger_id, distance_map in enumerate(self.charger_distance_maps):
+            distance_to_charger = self._distance_from_map(distance_map, row, col)
+            if distance_to_charger < 0 or distance_to_charger > battery_remaining:
+                continue
+
+            reachable_dirty_count, best_route_cost, best_target_distance = (
+                dirty_unlock_score(charger_id)
+            )
+            relay_hops = 0
+
+            if reachable_dirty_count == 0:
+                charger_row, charger_col = self.charger_positions[charger_id]
+                best_relay_score: tuple[int, int, int] | None = None
+
+                for next_charger_id, next_charger_map in enumerate(
+                    self.charger_distance_maps
+                ):
+                    if next_charger_id == charger_id:
+                        continue
+
+                    distance_to_next_charger = self._distance_from_map(
+                        next_charger_map,
+                        charger_row,
+                        charger_col,
+                    )
+                    if (
+                        distance_to_next_charger < 0
+                        or distance_to_next_charger > self.battery_capacity
+                    ):
+                        continue
+
+                    (
+                        relay_dirty_count,
+                        relay_route_cost,
+                        relay_target_distance,
+                    ) = dirty_unlock_score(next_charger_id)
+                    if relay_dirty_count == 0:
+                        continue
+
+                    relay_score = (
+                        -relay_dirty_count,
+                        distance_to_next_charger + relay_route_cost,
+                        relay_target_distance,
+                    )
+                    if best_relay_score is None or relay_score < best_relay_score:
+                        best_relay_score = relay_score
+
+                if best_relay_score is not None:
+                    reachable_dirty_count = -best_relay_score[0]
+                    best_route_cost = best_relay_score[1]
+                    best_target_distance = best_relay_score[2]
+                    relay_hops = 1
+
             if reachable_dirty_count == 0:
                 continue
 
             score = (
                 -reachable_dirty_count,
+                relay_hops,
                 best_route_cost,
                 distance_to_charger,
                 best_target_distance,
@@ -489,6 +553,19 @@ class StateFeatureEncoder:
             return -1
         return outbound_distance + recovery_distance + self._route_safety_reserve()
 
+    def _dirty_route_cost(
+        self,
+        cleaned_mask: int,
+        outbound_distance: int,
+        recovery_distance: int,
+    ) -> int:
+        if outbound_distance < 0:
+            return -1
+        remaining_dirty_count = len(self.dirty_positions) - cleaned_mask.bit_count()
+        if remaining_dirty_count <= 1:
+            return outbound_distance
+        return self._safe_route_cost(outbound_distance, recovery_distance)
+
     def _normalized_route_margin(self, margin: int) -> float:
         return max(-1.0, min(1.0, margin / self.battery_capacity))
 
@@ -507,6 +584,7 @@ class StateFeatureEncoder:
         self,
         row: int,
         col: int,
+        cleaned_mask: int,
         target_dirty_idx: int,
         battery_remaining: int,
     ) -> TargetRouteProfile:
@@ -517,7 +595,11 @@ class StateFeatureEncoder:
             col,
         )
         recovery_distance = self._nearest_charger_distance(target_row, target_col)
-        direct_route_cost = self._safe_route_cost(target_distance, recovery_distance)
+        direct_route_cost = self._dirty_route_cost(
+            cleaned_mask,
+            target_distance,
+            recovery_distance,
+        )
         direct_margin = self._normalized_route_margin(
             battery_remaining - direct_route_cost
             if direct_route_cost >= 0
@@ -544,7 +626,8 @@ class StateFeatureEncoder:
                 charger_row,
                 charger_col,
             )
-            via_post_charge_cost = self._safe_route_cost(
+            via_post_charge_cost = self._dirty_route_cost(
+                cleaned_mask,
                 charger_to_target_distance,
                 recovery_distance,
             )
@@ -690,6 +773,7 @@ class StateFeatureEncoder:
         route_profile = self._target_route_profile(
             row=row,
             col=col,
+            cleaned_mask=cleaned_mask,
             target_dirty_idx=target_dirty_idx,
             battery_remaining=battery_remaining,
         )

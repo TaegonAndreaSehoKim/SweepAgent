@@ -67,7 +67,7 @@ def test_state_feature_encoder_updates_target_context_after_cleaning() -> None:
     assert after_target_context[0] == 2 / 3
 
 
-def test_state_feature_encoder_marks_route_via_charger_as_required() -> None:
+def test_state_feature_encoder_allows_final_dirty_without_recovery_route() -> None:
     encoder = StateFeatureEncoder(map_name="complex_charge_bastion", battery_capacity=65)
 
     features = encoder.encode((15, 10, 5, 30))
@@ -78,12 +78,18 @@ def test_state_feature_encoder_marks_route_via_charger_as_required() -> None:
         target_context_start : -encoder.action_lookahead_feature_count
     ]
 
-    assert target_context[5] < 0.0
-    assert target_context[6] == 0.0
-    assert target_context[8] == 1.0
-    assert target_context[10] > 0.0
-    assert target_context[11] == 1.0
-    assert target_context[12] == 1.0
+    assert target_context[5] > 0.0
+    assert target_context[6] == 1.0
+    assert target_context[12] == 0.0
+
+
+def test_state_feature_encoder_guides_multi_charger_relay_to_final_dirty() -> None:
+    encoder = StateFeatureEncoder(map_name="complex_charge_bastion", battery_capacity=65)
+
+    assert encoder._best_relay_charger_id(15, 21, 5, 45) == 0
+    assert encoder.guided_action((15, 21, 5, 45)) == 0
+    assert encoder._best_relay_charger_id(5, 15, 5, 65) == 1
+    assert encoder._safe_remaining_dirty_distance(15, 10, 5, 65) >= 0
 
 
 def test_dqn_agent_masks_invalid_actions_for_random_exploration() -> None:

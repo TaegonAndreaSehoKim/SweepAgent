@@ -18,6 +18,7 @@ from configs.map_presets import (
     PENALTY_BATTERY_DEPLETED,
     PENALTY_ENTER_UNRECOVERABLE_STATE,
     PENALTY_MOVE_AWAY_FROM_CHARGER,
+    PENALTY_MOVE_AWAY_FROM_RELAY_CHARGER,
     PENALTY_MOVE_AWAY_FROM_SAFE_DIRTY,
     PENALTY_RECHARGE_WITHOUT_PROGRESS,
     PRINT_EVERY,
@@ -27,6 +28,7 @@ from configs.map_presets import (
     REWARD_INVALID,
     REWARD_MOVE,
     REWARD_MOVE_TOWARD_CHARGER,
+    REWARD_MOVE_TOWARD_RELAY_CHARGER,
     REWARD_MOVE_TOWARD_SAFE_DIRTY,
     REWARD_REVISIT,
     SUCCESSFUL_RECHARGE_COMPLETION_BONUS,
@@ -44,6 +46,8 @@ def build_env(
     battery_profile: Literal["training", "evaluation"] = "evaluation",
     battery_capacity_override: int | None = None,
     initial_cleaned_positions: list[tuple[int, int]] | None = None,
+    reward_move_toward_relay_charger: float | None = None,
+    penalty_move_away_from_relay_charger: float | None = None,
 ) -> GridCleanEnv:
     # Build one of the shared map presets.
     if map_name not in MAP_PRESETS:
@@ -77,6 +81,16 @@ def build_env(
         penalty_move_away_from_charger=PENALTY_MOVE_AWAY_FROM_CHARGER,
         reward_move_toward_safe_dirty=REWARD_MOVE_TOWARD_SAFE_DIRTY,
         penalty_move_away_from_safe_dirty=PENALTY_MOVE_AWAY_FROM_SAFE_DIRTY,
+        reward_move_toward_relay_charger=(
+            REWARD_MOVE_TOWARD_RELAY_CHARGER
+            if reward_move_toward_relay_charger is None
+            else reward_move_toward_relay_charger
+        ),
+        penalty_move_away_from_relay_charger=(
+            PENALTY_MOVE_AWAY_FROM_RELAY_CHARGER
+            if penalty_move_away_from_relay_charger is None
+            else penalty_move_away_from_relay_charger
+        ),
         battery_safety_reserve_min=BATTERY_SAFETY_RESERVE_MIN,
         battery_safety_reserve_ratio=BATTERY_SAFETY_RESERVE_RATIO,
         low_battery_recharge_reward=LOW_BATTERY_RECHARGE_REWARD,
