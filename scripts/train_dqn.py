@@ -128,6 +128,15 @@ def parse_args() -> argparse.Namespace:
         help="Minimum epsilon floor.",
     )
     parser.add_argument(
+        "--resume-epsilon",
+        type=float,
+        default=-1.0,
+        help=(
+            "Optional epsilon value to apply after loading --init-checkpoint. "
+            "Use a non-negative value for fine-tuning from a successful policy."
+        ),
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=128,
@@ -298,6 +307,8 @@ def apply_resume_training_overrides(agent: DQNAgent, args: argparse.Namespace) -
     agent.config.train_every = args.train_every
     agent.config.target_update_interval = args.target_update_interval
     agent.config.guided_exploration_ratio = args.guided_exploration_ratio
+    if args.resume_epsilon >= 0.0:
+        agent.epsilon = max(args.epsilon_min, min(1.0, args.resume_epsilon))
 
     for param_group in agent.optimizer.param_groups:
         param_group["lr"] = args.learning_rate
@@ -395,6 +406,7 @@ def build_checkpoint_metadata(
         "checkpoint_tag": args.checkpoint_tag,
         "battery_profile": args.battery_profile,
         "battery_capacity_override": args.battery_capacity_override,
+        "resume_epsilon": args.resume_epsilon,
         "reward_move_toward_relay_charger": args.reward_move_toward_relay_charger,
         "penalty_move_away_from_relay_charger": (
             args.penalty_move_away_from_relay_charger
@@ -488,6 +500,36 @@ def main() -> None:
         args=args,
         best_checkpoint_path=best_checkpoint_path,
     )
+    if (
+        args.save_best_eval_checkpoint
+        and best_checkpoint_path is not None
+        and best_eval_result is None
+        and args.init_checkpoint
+        and args.eval_episodes > 0
+    ):
+        best_eval_result = evaluate_dqn_agent(
+            map_name=args.map_name,
+            eval_episodes=args.eval_episodes,
+            agent=agent,
+            battery_capacity_override=(
+                args.battery_capacity_override
+                if args.battery_capacity_override > 0
+                else env.battery_capacity
+            ),
+        )
+        best_checkpoint_episodes = starting_checkpoint_episodes
+        metadata = build_checkpoint_metadata(
+            args=args,
+            checkpoint_episodes=best_checkpoint_episodes,
+            cumulative_episodes=starting_checkpoint_episodes,
+            starting_checkpoint_episodes=starting_checkpoint_episodes,
+            eval_result=best_eval_result,
+            best_eval_result=best_eval_result,
+            best_checkpoint_episodes=best_checkpoint_episodes,
+            best_checkpoint_path=best_checkpoint_path,
+            is_best_eval_checkpoint=True,
+        )
+        agent.save(best_checkpoint_path, metadata=metadata)
     last_eval_result: dict[str, float] | None = None
     last_eval_checkpoint_episodes = 0
 
@@ -509,6 +551,7 @@ def main() -> None:
     print(f"learning_rate: {agent.config.learning_rate}")
     print(f"discount_factor: {agent.config.discount_factor}")
     print(f"epsilon: {agent.epsilon}")
+    print(f"resume_epsilon: {args.resume_epsilon if args.resume_epsilon >= 0 else 'none'}")
     print(f"epsilon_decay: {agent.config.epsilon_decay}")
     print(f"epsilon_min: {agent.config.epsilon_min}")
     print(f"batch_size: {agent.config.batch_size}")
