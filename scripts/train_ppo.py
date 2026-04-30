@@ -96,6 +96,21 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run guided behavior-cloning warm-start at the start of every curriculum stage.",
     )
+    parser.add_argument(
+        "--guided-imitation-coef",
+        type=float,
+        default=0.0,
+        help="Coefficient for mixing guided behavior-cloning loss into PPO updates.",
+    )
+    parser.add_argument(
+        "--guided-imitation-episodes",
+        type=int,
+        default=0,
+        help=(
+            "Guided episodes to collect for the mixed imitation buffer at each stage. "
+            "If omitted with a positive coefficient, warm-start episodes are reused."
+        ),
+    )
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--eval-every", type=int, default=0)
     parser.add_argument("--save-best-eval-checkpoint", action="store_true")
@@ -342,6 +357,11 @@ def build_checkpoint_metadata(
         "eval_episodes": args.eval_episodes,
         "eval_every": args.eval_every,
         "save_best_eval_checkpoint": args.save_best_eval_checkpoint,
+        "guided_warm_start_episodes": args.guided_warm_start_episodes,
+        "guided_warm_start_epochs": args.guided_warm_start_epochs,
+        "guided_warm_start_per_stage": args.guided_warm_start_per_stage,
+        "guided_imitation_coef": args.guided_imitation_coef,
+        "guided_imitation_episodes": args.guided_imitation_episodes,
         "eval_result": eval_result,
         "best_eval_result": best_eval_result or {},
         "best_checkpoint_episodes": best_checkpoint_episodes,
@@ -383,6 +403,9 @@ def finalize_rollout_update(
     agent: PPOAgent,
     rollout: list[PPORolloutStep],
     state,
+    imitation_states: list | None = None,
+    imitation_actions: list[int] | None = None,
+    imitation_coef: float = 0.0,
 ) -> dict[str, float]:
     if not rollout:
         return {
@@ -390,28 +413,30 @@ def finalize_rollout_update(
             "policy_loss": 0.0,
             "value_loss": 0.0,
             "entropy": 0.0,
+            "imitation_loss": 0.0,
         }
     last_value = 0.0
     if not rollout[-1].done:
         with torch.no_grad():
             _, _, last_value = agent.select_action(state, training=False)
-    return agent.update(rollout=rollout, last_value=last_value)
+    return agent.update(
+        rollout=rollout,
+        last_value=last_value,
+        imitation_states=imitation_states,
+        imitation_actions=imitation_actions,
+        imitation_coef=imitation_coef,
+    )
 
 
-def run_guided_warm_start(
+def collect_guided_samples(
     agent: PPOAgent,
     env,
     episodes: int,
-    epochs: int,
-    minibatch_size: int,
-) -> dict[str, float]:
-    if episodes <= 0:
-        return {"bc_loss": 0.0, "bc_entropy": 0.0, "samples": 0.0}
-
+) -> tuple[list, list[int]]:
     states = []
     actions: list[int] = []
-    was_training = agent.network.training
-    agent.network.train()
+    if episodes <= 0:
+        return states, actions
 
     for _ in range(episodes):
         state = env.reset()
@@ -426,6 +451,21 @@ def run_guided_warm_start(
             actions.append(guided_action)
             state = next_state
 
+    return states, actions
+
+
+def run_guided_warm_start(
+    agent: PPOAgent,
+    states: list,
+    actions: list[int],
+    epochs: int,
+    minibatch_size: int,
+) -> dict[str, float]:
+    if not states:
+        return {"bc_loss": 0.0, "bc_entropy": 0.0, "samples": 0.0}
+
+    was_training = agent.network.training
+    agent.network.train()
     metrics = agent.behavior_clone_update(
         states=states,
         actions=actions,
@@ -491,7 +531,11 @@ def main() -> None:
     steps_taken: list[float] = []
     losses: list[float] = []
     entropies: list[float] = []
+    imitation_losses: list[float] = []
     rollout: list[PPORolloutStep] = []
+    imitation_states = []
+    imitation_actions: list[int] = []
+    active_imitation_coef = 0.0
 
     print(f"Training PPO agent on map='{args.map_name}'...")
     print(f"episodes: {total_training_episodes}")
@@ -523,6 +567,8 @@ def main() -> None:
         )
     )
     print(f"guided_warm_start_episodes: {args.guided_warm_start_episodes}")
+    print(f"guided_imitation_coef: {args.guided_imitation_coef}")
+    print(f"guided_imitation_episodes: {args.guided_imitation_episodes}")
     print(f"eval_episodes: {args.eval_episodes}")
     print(f"eval_every: {args.eval_every}")
     print(f"save_best_eval_checkpoint: {args.save_best_eval_checkpoint}")
@@ -551,10 +597,15 @@ def main() -> None:
         if args.guided_warm_start_episodes > 0 and (
             stage_idx == 1 or args.guided_warm_start_per_stage
         ):
-            warm_start_metrics = run_guided_warm_start(
+            warm_start_states, warm_start_actions = collect_guided_samples(
                 agent=agent,
                 env=env,
                 episodes=args.guided_warm_start_episodes,
+            )
+            warm_start_metrics = run_guided_warm_start(
+                agent=agent,
+                states=warm_start_states,
+                actions=warm_start_actions,
                 epochs=args.guided_warm_start_epochs,
                 minibatch_size=args.guided_warm_start_minibatch_size,
             )
@@ -563,6 +614,29 @@ def main() -> None:
                 f"samples={warm_start_metrics['samples']:.0f} | "
                 f"bc_loss={warm_start_metrics['bc_loss']:.4f} | "
                 f"entropy={warm_start_metrics['bc_entropy']:.4f}"
+            )
+
+        imitation_states = []
+        imitation_actions = []
+        active_imitation_coef = 0.0
+        if args.guided_imitation_coef > 0.0:
+            imitation_episodes = (
+                args.guided_imitation_episodes
+                if args.guided_imitation_episodes > 0
+                else args.guided_warm_start_episodes
+            )
+            imitation_states, imitation_actions = collect_guided_samples(
+                agent=agent,
+                env=env,
+                episodes=imitation_episodes,
+            )
+            if imitation_states:
+                active_imitation_coef = args.guided_imitation_coef
+            print(
+                "guided_imitation_buffer: "
+                f"episodes={imitation_episodes} | "
+                f"samples={len(imitation_states)} | "
+                f"coef={active_imitation_coef:.4f}"
             )
 
         for _ in range(stage_episodes):
@@ -593,9 +667,13 @@ def main() -> None:
                         agent=agent,
                         rollout=rollout,
                         state=state,
+                        imitation_states=imitation_states,
+                        imitation_actions=imitation_actions,
+                        imitation_coef=active_imitation_coef,
                     )
                     losses.append(metrics["loss"])
                     entropies.append(metrics["entropy"])
+                    imitation_losses.append(metrics["imitation_loss"])
                     rollout = []
 
             final_info = env.get_episode_info(termination_reason=termination_reason)
@@ -611,6 +689,9 @@ def main() -> None:
                 start_idx = max(0, len(rewards) - args.print_every)
                 recent_losses = losses[-max(1, min(len(losses), args.print_every)) :]
                 recent_entropies = entropies[-max(1, min(len(entropies), args.print_every)) :]
+                recent_imitation_losses = imitation_losses[
+                    -max(1, min(len(imitation_losses), args.print_every)) :
+                ]
                 print(
                     f"Episode {global_episode_idx}/{total_training_episodes} | "
                     f"stage={stage_name} | "
@@ -619,7 +700,8 @@ def main() -> None:
                     f"success_rate={mean(successes[start_idx:]) * 100:.2f}% | "
                     f"avg_steps={mean(steps_taken[start_idx:]):.2f} | "
                     f"loss={(mean(recent_losses) if recent_losses else 0.0):.4f} | "
-                    f"entropy={(mean(recent_entropies) if recent_entropies else 0.0):.4f}"
+                    f"entropy={(mean(recent_entropies) if recent_entropies else 0.0):.4f} | "
+                    f"imitation_loss={(mean(recent_imitation_losses) if recent_imitation_losses else 0.0):.4f}"
                 )
 
             if (
@@ -673,9 +755,13 @@ def main() -> None:
             agent=agent,
             rollout=rollout,
             state=state,
+            imitation_states=imitation_states,
+            imitation_actions=imitation_actions,
+            imitation_coef=active_imitation_coef,
         )
         losses.append(metrics["loss"])
         entropies.append(metrics["entropy"])
+        imitation_losses.append(metrics["imitation_loss"])
 
     reward_plot_path = save_line_plot(
         values=moving_average(rewards, window=100),

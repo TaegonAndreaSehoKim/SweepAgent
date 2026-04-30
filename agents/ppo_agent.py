@@ -159,14 +159,31 @@ class PPOAgent:
         returns = advantage_tensor + value_tensor
         return returns, advantage_tensor
 
-    def update(self, rollout: list[PPORolloutStep], last_value: float) -> dict[str, float]:
+    def update(
+        self,
+        rollout: list[PPORolloutStep],
+        last_value: float,
+        imitation_states: list[State] | None = None,
+        imitation_actions: list[int] | None = None,
+        imitation_coef: float = 0.0,
+    ) -> dict[str, float]:
         if not rollout:
             return {
                 "loss": 0.0,
                 "policy_loss": 0.0,
                 "value_loss": 0.0,
                 "entropy": 0.0,
+                "imitation_loss": 0.0,
             }
+        if imitation_coef > 0.0 and (
+            not imitation_states
+            or not imitation_actions
+            or len(imitation_states) != len(imitation_actions)
+        ):
+            raise ValueError(
+                "imitation_states and imitation_actions must be non-empty matching lists "
+                "when imitation_coef is positive."
+            )
 
         returns, advantages = self.compute_returns_and_advantages(
             rollout=rollout,
@@ -188,10 +205,21 @@ class PPOAgent:
 
         batch_size = len(rollout)
         minibatch_size = min(self.config.minibatch_size, batch_size)
+        imitation_action_tensor = None
+        imitation_batch_size = 0
+        if imitation_coef > 0.0 and imitation_states and imitation_actions:
+            imitation_action_tensor = torch.tensor(
+                imitation_actions,
+                dtype=torch.int64,
+                device=self.device,
+            )
+            imitation_batch_size = len(imitation_states)
+
         losses: list[float] = []
         policy_losses: list[float] = []
         value_losses: list[float] = []
         entropies: list[float] = []
+        imitation_losses: list[float] = []
 
         for _ in range(self.config.update_epochs):
             permutation = torch.randperm(batch_size, device=self.device)
@@ -222,6 +250,32 @@ class PPOAgent:
                     + self.config.value_coef * value_loss
                     - self.config.entropy_coef * entropy
                 )
+                imitation_loss = torch.zeros((), device=self.device)
+                if (
+                    imitation_coef > 0.0
+                    and imitation_states
+                    and imitation_action_tensor is not None
+                    and imitation_batch_size > 0
+                ):
+                    sample_count = min(minibatch_size, imitation_batch_size)
+                    imitation_indices = torch.randint(
+                        low=0,
+                        high=imitation_batch_size,
+                        size=(sample_count,),
+                        device=self.device,
+                    )
+                    imitation_batch_states = [
+                        imitation_states[int(idx)]
+                        for idx in imitation_indices.tolist()
+                    ]
+                    imitation_distribution, _ = self._distribution_and_value(
+                        imitation_batch_states
+                    )
+                    imitation_batch_actions = imitation_action_tensor[imitation_indices]
+                    imitation_loss = -imitation_distribution.log_prob(
+                        imitation_batch_actions
+                    ).mean()
+                    loss = loss + imitation_coef * imitation_loss
 
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -236,6 +290,7 @@ class PPOAgent:
                 policy_losses.append(float(policy_loss.item()))
                 value_losses.append(float(value_loss.item()))
                 entropies.append(float(entropy.item()))
+                imitation_losses.append(float(imitation_loss.item()))
 
         self.training_steps += len(rollout)
         return {
@@ -243,6 +298,7 @@ class PPOAgent:
             "policy_loss": sum(policy_losses) / len(policy_losses),
             "value_loss": sum(value_losses) / len(value_losses),
             "entropy": sum(entropies) / len(entropies),
+            "imitation_loss": sum(imitation_losses) / len(imitation_losses),
         }
 
     def behavior_clone_update(

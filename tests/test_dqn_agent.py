@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from agents.dqn_agent import DQNAgent, DQNConfig, ReplayBuffer, StateFeatureEncoder
+from utils.experiment_utils import build_env
 from utils.dqn_experiment_utils import (
     get_dqn_best_checkpoint_path,
     get_dqn_checkpoint_path,
@@ -90,6 +91,25 @@ def test_state_feature_encoder_guides_multi_charger_relay_to_final_dirty() -> No
     assert encoder.guided_action((15, 21, 5, 45)) == 0
     assert encoder._best_relay_charger_id(5, 15, 5, 65) == 1
     assert encoder._safe_remaining_dirty_distance(15, 10, 5, 65) >= 0
+
+
+def test_state_feature_encoder_guided_action_solves_medium_charge_map() -> None:
+    env = build_env(map_name="charge_maze_medium", battery_profile="evaluation")
+    encoder = StateFeatureEncoder(
+        map_name="charge_maze_medium",
+        battery_capacity=env.battery_capacity,
+    )
+    state = env.reset()
+    done = False
+    info = {}
+
+    while not done:
+        action = encoder.guided_action(state)
+        assert action is not None
+        state, _, done, info = env.step(action)
+
+    assert info["termination_reason"] == "all_cleaned"
+    assert info["cleaned_ratio"] == 1.0
 
 
 def test_dqn_agent_masks_invalid_actions_for_random_exploration() -> None:

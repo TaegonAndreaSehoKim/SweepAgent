@@ -398,6 +398,52 @@ class StateFeatureEncoder:
 
         return best_dirty_idx
 
+    def _relaxed_dirty_route_cost(
+        self,
+        cleaned_mask: int,
+        outbound_distance: int,
+        recovery_distance: int,
+    ) -> int:
+        if outbound_distance < 0:
+            return -1
+        remaining_dirty_count = len(self.dirty_positions) - cleaned_mask.bit_count()
+        if remaining_dirty_count <= 1:
+            return outbound_distance
+        if recovery_distance < 0:
+            return -1
+        return outbound_distance + recovery_distance
+
+    def _relaxed_safe_remaining_dirty_distance(
+        self,
+        row: int,
+        col: int,
+        cleaned_mask: int,
+        battery_remaining: int,
+    ) -> int:
+        best_distance = -1
+        for dirty_idx, distance_map in enumerate(self.dirty_distance_maps):
+            if (cleaned_mask >> dirty_idx) & 1:
+                continue
+
+            distance_to_dirty = self._distance_from_map(distance_map, row, col)
+            if distance_to_dirty < 0:
+                continue
+
+            dirty_row, dirty_col = self.dirty_positions[dirty_idx]
+            dirty_to_charger = self._nearest_charger_distance(dirty_row, dirty_col)
+            route_cost = self._relaxed_dirty_route_cost(
+                cleaned_mask,
+                distance_to_dirty,
+                dirty_to_charger,
+            )
+            if route_cost < 0 or route_cost > battery_remaining:
+                continue
+
+            if best_distance == -1 or distance_to_dirty < best_distance:
+                best_distance = distance_to_dirty
+
+        return best_distance
+
     def _nearest_charger_distance(self, row: int, col: int) -> int:
         best_distance = -1
         for distance_map in self.charger_distance_maps:
@@ -827,18 +873,28 @@ class StateFeatureEncoder:
         target_kind = "charger"
         relay_charger_id = -1
         charger_distance = self._nearest_charger_distance(row, col)
-        if (
-            charger_distance >= 0
-            and battery_remaining <= charger_distance + self._emergency_charger_buffer()
-        ):
-            target_kind = "charger"
-        elif self._safe_remaining_dirty_distance(
+        strict_dirty_distance = self._safe_remaining_dirty_distance(
             row,
             col,
             cleaned_mask,
             battery_remaining,
-        ) >= 0:
+        )
+        relaxed_dirty_distance = self._relaxed_safe_remaining_dirty_distance(
+            row,
+            col,
+            cleaned_mask,
+            battery_remaining,
+        )
+
+        if strict_dirty_distance >= 0:
             target_kind = "dirty"
+        elif relaxed_dirty_distance >= 0:
+            target_kind = "relaxed_dirty"
+        elif (
+            charger_distance >= 0
+            and battery_remaining <= charger_distance + self._emergency_charger_buffer()
+        ):
+            target_kind = "charger"
         else:
             relay_charger_id = self._best_relay_charger_id(
                 row=row,
@@ -859,6 +915,13 @@ class StateFeatureEncoder:
 
             if target_kind == "dirty":
                 distance = self._safe_remaining_dirty_distance(
+                    next_row,
+                    next_col,
+                    cleaned_mask,
+                    max(0, battery_remaining - 1),
+                )
+            elif target_kind == "relaxed_dirty":
+                distance = self._relaxed_safe_remaining_dirty_distance(
                     next_row,
                     next_col,
                     cleaned_mask,

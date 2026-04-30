@@ -65,6 +65,49 @@ def test_ppo_update_changes_optimization_step_count() -> None:
     assert metrics["loss"] != 0.0
 
 
+def test_ppo_update_can_mix_guided_imitation_loss() -> None:
+    agent = PPOAgent(
+        config=PPOConfig(
+            map_name="default",
+            battery_capacity=17,
+            hidden_size=16,
+            rollout_steps=4,
+            minibatch_size=2,
+            update_epochs=2,
+            seed=42,
+        ),
+        device="cpu",
+    )
+    rollout = []
+    state = (1, 1, 0, 17)
+
+    for _ in range(4):
+        action, log_prob, value = agent.select_action(state, training=True)
+        rollout.append(
+            PPORolloutStep(
+                state=state,
+                action=action,
+                reward=1.0,
+                done=False,
+                log_prob=log_prob,
+                value=value,
+            )
+        )
+        state = (2, 1, 0, 16)
+
+    metrics = agent.update(
+        rollout=rollout,
+        last_value=0.0,
+        imitation_states=[(1, 1, 0, 17), (2, 1, 0, 16)],
+        imitation_actions=[1, 3],
+        imitation_coef=0.2,
+    )
+
+    assert agent.optimization_steps == 4
+    assert agent.training_steps == 4
+    assert metrics["imitation_loss"] > 0.0
+
+
 def test_ppo_behavior_clone_update_changes_optimization_step_count() -> None:
     agent = PPOAgent(
         config=PPOConfig(
