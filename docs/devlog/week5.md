@@ -327,11 +327,105 @@ The next PPO attempt should probably mix imitation loss into PPO updates, increa
 
 ---
 
+## 13. Guided PPO Final-Relay Curriculum
+
+The next PPO iteration added three things on top of curriculum and warm-start:
+
+- mixed guided imitation loss during PPO updates
+- DAgger-style labels collected from states visited by the current PPO policy
+- periodic behavior-cloning updates on the accumulated DAgger buffer
+
+For `complex_charge_bastion`, the useful curriculum was:
+
+- keep dirty tile `2`
+- keep dirty tiles `0,2`
+- keep dirty tiles `1,2`
+- full map
+
+with stage episode counts:
+
+- `800`
+- `1200`
+- `2000`
+- `2500`
+
+The successful run used:
+
+- seed `42`
+- guided warm-start: `20` episodes per stage
+- guided imitation coefficient: `0.2`
+- DAgger coefficient: `0.75`
+- DAgger buffer capacity: `50000`
+- periodic BC every `100` episodes
+- BC epochs: `2`
+
+The best-eval checkpoint solved the map:
+
+- `avg_reward = -53.00`
+- `avg_steps = 150`
+- `avg_cleaned_ratio = 100.00%`
+- `success_rate = 100.00%`
+
+The result reproduced over `20`, `50`, and `200` CPU evaluation episodes.
+The final checkpoint from the same run regressed to `2/3`, so comparisons should use the saved best-eval checkpoint:
+
+- `ppo_agent_complex_charge_bastion_best_eval_seed_42_ppo_finalrelay_curriculum6500.pt`
+
+This makes guided PPO the current policy-gradient reference for `bastion`.
+Plain PPO remains a useful negative baseline because it still fails on the same map.
+
+---
+
+## 14. UI Training And Playback Integration
+
+The pygame UI was extended beyond tabular Q-learning.
+
+It now supports:
+
+- `dqn` script-backed training
+- `ppo` script-backed training
+- `ppo_guided` training with the staged guided-imitation recipe
+- `dqn_best` playback for saved DQN best-eval checkpoints
+- `ppo_best` playback for saved PPO best-eval checkpoints
+
+For `complex_charge_bastion`, the UI loader prefers the current reference checkpoints:
+
+- DQN seed `418`, tag `v2relay_shape_finalroute`
+- PPO seed `42`, tag `ppo_finalrelay_curriculum6500`
+
+The UI training subprocess now uses unbuffered output, and DQN/PPO progress is reported every `250` episodes by default.
+This avoids the earlier issue where a long DQN run looked stuck because no metrics appeared before episode `1000`.
+
+A fresh UI DQN test was run on `complex_charge_bastion`:
+
+- seed `421`
+- episodes `7000`
+- learning rate `0.0007`
+- discount factor `0.995`
+- epsilon decay `0.999965`
+- epsilon minimum `0.12`
+- guided exploration ratio `0.6`
+
+That run did not solve the map.
+The best-eval checkpoint at episode `4000` reached only:
+
+- `avg_reward = -132.00`
+- `avg_steps = 87`
+- `avg_cleaned_ratio = 33.33%`
+- `success_rate = 0.00%`
+
+The final checkpoint regressed to `0/3` cleaned.
+The read is that this specific DQN configuration still failed to learn the charger-relay chain after the first dirty tile.
+The next DQN attempt should increase guided exploration exposure and maintain exploration longer, rather than treating this run as a solved setting.
+
+---
+
 ## Next Steps
 
 The most useful next steps from here are:
 
 - treat the relay-aware DQN seed `418` result as the current strongest `bastion` reference
-- strengthen PPO beyond one-time guided warm-start before spending more long runs on `bastion`
+- treat the guided PPO final-relay best-eval checkpoint as the current policy-gradient `bastion` reference
+- use the UI for quick visual checks of DQN, PPO, guided PPO, and saved best-eval checkpoints
 - add SARSA after PPO stabilizes enough for a fair comparison table
 - keep generated checkpoints, plots, logs, and GIFs out of version control

@@ -55,7 +55,22 @@ def test_build_training_command_supports_dqn() -> None:
 
     assert "scripts/train_dqn.py" in command
     assert "--save-best-eval-checkpoint" in command
+    assert command[command.index("--print-every") + 1] == "10"
+    assert command[command.index("--eval-every") + 1] == "10"
     assert command[command.index("--checkpoint-tag") + 1] == "ui"
+
+
+def test_dqn_ui_command_reports_progress_every_250_episodes() -> None:
+    command = build_training_command(
+        algorithm_name="dqn",
+        map_name="complex_charge_bastion",
+        episodes=7000,
+        seed=421,
+        algorithm_params={"checkpoint_tag": "ui"},
+    )
+
+    assert command[command.index("--print-every") + 1] == "250"
+    assert command[command.index("--eval-every") + 1] == "250"
 
 
 def test_build_training_command_supports_guided_ppo_bastion_recipe() -> None:

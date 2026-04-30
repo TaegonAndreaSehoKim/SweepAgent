@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import queue
 import random
 import re
@@ -140,6 +141,7 @@ CURRICULUM_STAGE1_MIN_EPISODES = 20000
 CURRICULUM_STAGE2_MIN_EPISODES = 50000
 DEFAULT_BATTERY_ADAPT_STAGE2_EPISODES = 50000
 DEFAULT_PRINT_EVERY = 1000
+DEEP_TRAINING_PROGRESS_EVERY = 250
 
 MENU_NUMERIC_FIELDS = (
     "episodes",
@@ -241,9 +243,12 @@ class TrainingRunner:
         self.return_code: int | None = None
 
     def start(self, command: list[str]) -> None:
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
         self.process = subprocess.Popen(
             command,
             cwd=PROJECT_ROOT,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -413,6 +418,10 @@ def split_episode_budget(total_episodes: int, weights: list[int]) -> list[int]:
                 break
 
     return stage_episodes
+
+
+def get_deep_training_progress_interval(episodes: int) -> int:
+    return max(1, min(DEEP_TRAINING_PROGRESS_EVERY, episodes))
 
 
 def get_preview_checkpoint_path(
@@ -828,6 +837,7 @@ def build_training_command(
 
     if algorithm_name == "dqn":
         checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui"))
+        progress_every = get_deep_training_progress_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_dqn.py",
@@ -840,7 +850,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            str(progress_every),
             "--learning-rate",
             str(algorithm_params.get("learning_rate", 0.0005)),
             "--discount-factor",
@@ -868,7 +878,7 @@ def build_training_command(
             "--eval-episodes",
             "20",
             "--eval-every",
-            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            str(progress_every),
             "--feature-version",
             "2",
             "--checkpoint-tag",
@@ -879,6 +889,7 @@ def build_training_command(
 
     if algorithm_name == "ppo":
         checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui"))
+        progress_every = get_deep_training_progress_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_ppo.py",
@@ -891,7 +902,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            str(progress_every),
             "--learning-rate",
             str(algorithm_params.get("learning_rate", 0.0003)),
             "--discount-factor",
@@ -907,7 +918,7 @@ def build_training_command(
             "--eval-episodes",
             "20",
             "--eval-every",
-            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            str(progress_every),
             "--checkpoint-tag",
             checkpoint_tag,
             "--save-best-eval-checkpoint",
@@ -916,6 +927,7 @@ def build_training_command(
 
     if algorithm_name == "ppo_guided":
         checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui_guided"))
+        progress_every = get_deep_training_progress_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_ppo.py",
@@ -926,7 +938,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            str(progress_every),
             "--learning-rate",
             str(algorithm_params.get("learning_rate", 0.0003)),
             "--discount-factor",
@@ -965,7 +977,7 @@ def build_training_command(
             "--eval-episodes",
             "20",
             "--eval-every",
-            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            str(progress_every),
             "--checkpoint-tag",
             checkpoint_tag,
             "--save-best-eval-checkpoint",

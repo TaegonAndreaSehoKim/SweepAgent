@@ -55,7 +55,7 @@ Implemented agents:
 - `PPOAgent`
 
 Checkpoints are reused across training, evaluation, comparison, GIF rendering, and UI playback.
-The DQN and PPO workflows are currently script-driven and are not yet integrated into the pygame UI.
+The DQN and PPO workflows are available from both the script entry points and the pygame UI.
 
 ### Training UI
 
@@ -75,8 +75,12 @@ The pygame UI supports:
   - epsilon min
   - playback delay
 - curriculum mode selection from the algorithm menu
+- script-backed DQN and PPO training
+- guided PPO training for hard charge maps
+- playback of saved DQN/PPO best-eval checkpoints
 
 The recent UI direction is to keep only high-value controls and make hyperparameters directly editable instead of limiting them to dropdown presets.
+For longer DQN/PPO runs, the UI launches subprocesses with unbuffered output and reports progress every `250` episodes by default.
 
 ### Curriculum Support
 
@@ -260,8 +264,9 @@ PPO has also been added as a policy-gradient baseline:
 - on `charge_maze_medium`, plain PPO reaches `1/3` greedy cleaned ratio after 5000 episodes but not full success
 - on `complex_charge_bastion`, plain PPO remains at `0/3` cleaned after 5000 episodes
 - curriculum plus guided behavior-cloning warm-start was tested on `charge_maze_medium`, but it still only reached `1/3` at best and regressed to `0/3` by the final full-map stage
+- guided PPO with final-relay curriculum, DAgger-style relabeling, and periodic BC solves `complex_charge_bastion` with a 150-step best-eval rollout
 
-The practical read is that PPO is now runnable and test-covered, but it is not yet competitive with the relay-aware DQN recipe on charge-planning maps.
+The practical read is that plain PPO is too weak for charger-relay maps, but guided PPO is now a competitive policy-gradient reference for `complex_charge_bastion`.
 
 ## Performance And CUDA Notes
 
@@ -460,6 +465,12 @@ For staged charge-map experiments, PPO can preclean selected dirty tiles during 
 python scripts/train_ppo.py --map-name charge_maze_medium --battery-profile evaluation --seed 42 --curriculum-stage-keep-dirty-indices 2 1,2 full --curriculum-stage-episodes 1500 1500 2000 --guided-warm-start-episodes 20 --guided-warm-start-epochs 2 --guided-warm-start-minibatch-size 256 --guided-warm-start-per-stage --rollout-steps 2048 --update-epochs 4 --minibatch-size 256 --hidden-size 256 --eval-episodes 20 --eval-every 500 --save-best-eval-checkpoint --checkpoint-tag ppo_curriculum_guided5000
 ```
 
+The current `complex_charge_bastion` guided PPO reference uses a final-relay curriculum plus DAgger-style relabeling and periodic behavior-cloning updates:
+
+```bash
+python scripts/train_ppo.py --map-name complex_charge_bastion --battery-profile evaluation --seed 42 --print-every 250 --learning-rate 0.0003 --discount-factor 0.99 --curriculum-stage-keep-dirty-indices 2 0,2 1,2 full --curriculum-stage-episodes 800 1200 2000 2500 --guided-warm-start-episodes 20 --guided-warm-start-epochs 2 --guided-warm-start-minibatch-size 256 --guided-warm-start-per-stage --guided-imitation-coef 0.2 --guided-imitation-episodes 20 --guided-dagger-coef 0.75 --guided-dagger-buffer-capacity 50000 --guided-dagger-refresh-every 1 --guided-dagger-bc-every 100 --guided-dagger-bc-epochs 2 --guided-dagger-bc-minibatch-size 256 --rollout-steps 2048 --update-epochs 4 --minibatch-size 256 --hidden-size 256 --eval-episodes 20 --eval-every 250 --save-best-eval-checkpoint --checkpoint-tag ppo_finalrelay_curriculum6500
+```
+
 ### Run batch training in parallel
 
 ```bash
@@ -511,7 +522,7 @@ python scripts/train_q_curriculum.py --stage1-map charge_maze_medium --stage2-ma
 The current improvement areas are:
 
 - using the relay-aware DQN seed `418` checkpoint as the current strongest `bastion` reference result
-- improving PPO beyond one-time guided warm-start, likely with mixed imitation loss during PPO updates or stronger full-map stage safeguards
+- using the guided PPO final-relay checkpoint as the current policy-gradient `bastion` reference
 - adding SARSA so Q-learning, DQN, PPO, and SARSA can be compared under the same evaluation flow
-- deciding whether DQN should be integrated into the pygame UI
+- using the pygame UI for quick visual checks of DQN, PPO, guided PPO, and saved best-eval checkpoints
 - keeping generated checkpoints, plots, logs, and GIFs out of version control
