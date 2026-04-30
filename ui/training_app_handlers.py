@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 import time
 
-from utils.experiment_utils import build_env, load_or_train_q_agent
+from utils.experiment_utils import build_env
 from utils.ui_utils import reset_panel_state
 from ui.training_app_core import (
     PREVIEW_STEP_INTERVAL_SEC,
@@ -14,6 +14,8 @@ from ui.training_app_core import (
     get_preview_checkpoint_path,
     get_preview_map_name,
     is_trainable_algorithm,
+    load_playback_agent,
+    select_playback_action,
 )
 from ui.training_app_state import (
     ComparePlaybackState,
@@ -99,8 +101,14 @@ def start_selected_flow(
             single_playback.path_history,
             single_playback.visit_counts,
         ) = reset_panel_state(single_playback.env)
-        single_playback.agent = None
-        single_playback.algorithm_name = "random_baseline"
+        single_playback.agent = load_playback_agent(
+            algorithm_name=menu.algorithm_name,
+            map_name=menu.map_name,
+            episodes=menu.episodes,
+            seed=train_seed,
+            algorithm_params=menu.algorithm_params,
+        )
+        single_playback.algorithm_name = menu.algorithm_name
         single_playback.is_paused = False
         single_playback.last_step_time = time.time()
         single_playback.rng = random.Random(random_seed)
@@ -110,8 +118,14 @@ def start_selected_flow(
     compare_playback.learned_env = build_env(map_name=menu.map_name)
     compare_playback.random_env.map_name = menu.map_name
     compare_playback.learned_env.map_name = menu.map_name
-    compare_playback.learned_agent = None
-    compare_playback.learned_algorithm_name = "random_baseline"
+    compare_playback.learned_agent = load_playback_agent(
+        algorithm_name=menu.algorithm_name,
+        map_name=menu.map_name,
+        episodes=menu.episodes,
+        seed=train_seed,
+        algorithm_params=menu.algorithm_params,
+    )
+    compare_playback.learned_algorithm_name = menu.algorithm_name
 
     (
         compare_playback.random_state,
@@ -154,13 +168,19 @@ def update_training_from_subprocess(
         training.log_lines.append(line)
         match = TRAINING_LINE_PATTERN.search(line)
         if match:
+            metrics: dict[str, str] = {}
+            for part in match.group(3).split("|"):
+                if "=" not in part:
+                    continue
+                key, value = part.strip().split("=", maxsplit=1)
+                metrics[key.strip()] = value.strip()
             training.latest_metrics = {
                 "episode": match.group(1),
                 "total": match.group(2),
-                "avg_reward": match.group(3),
-                "avg_cleaned_ratio": f"{match.group(4)}%",
-                "success_rate": f"{match.group(5)}%",
-                "epsilon": match.group(6),
+                "avg_reward": metrics.get("avg_reward", "-"),
+                "avg_cleaned_ratio": metrics.get("avg_cleaned_ratio", "-"),
+                "success_rate": metrics.get("success_rate", "-"),
+                "epsilon": metrics.get("epsilon", "-"),
             }
 
     if not training.runner.finished:
@@ -188,10 +208,12 @@ def update_training_from_subprocess(
             single_playback.visit_counts,
         ) = reset_panel_state(single_playback.env)
 
-        single_playback.agent = load_or_train_q_agent(
+        single_playback.agent = load_playback_agent(
+            algorithm_name=menu.algorithm_name,
             map_name=playback_map_name,
-            num_episodes=playback_episodes,
+            episodes=playback_episodes,
             seed=train_seed,
+            algorithm_params=menu.algorithm_params,
         )
         single_playback.algorithm_name = menu.algorithm_name
         single_playback.is_paused = False
@@ -222,10 +244,12 @@ def update_training_from_subprocess(
         compare_playback.learned_visits,
     ) = reset_panel_state(compare_playback.learned_env)
 
-    compare_playback.learned_agent = load_or_train_q_agent(
+    compare_playback.learned_agent = load_playback_agent(
+        algorithm_name=menu.algorithm_name,
         map_name=playback_map_name,
-        num_episodes=playback_episodes,
+        episodes=playback_episodes,
         seed=train_seed,
+        algorithm_params=menu.algorithm_params,
     )
     compare_playback.learned_algorithm_name = menu.algorithm_name
     compare_playback.is_paused = False
@@ -295,10 +319,12 @@ def step_single_playback(single_playback: SinglePlaybackState, step_delay: float
     if now - single_playback.last_step_time < step_delay:
         return
 
-    if single_playback.agent is None:
-        action = single_playback.rng.randrange(len(single_playback.env.ACTIONS))
-    else:
-        action = single_playback.agent.select_action(single_playback.state, training=False)
+    action = select_playback_action(
+        agent=single_playback.agent,
+        state=single_playback.state,
+        action_count=len(single_playback.env.ACTIONS),
+        rng=single_playback.rng,
+    )
 
     next_state, reward, done, _ = single_playback.env.step(action)
     single_playback.state = next_state
@@ -333,10 +359,12 @@ def step_compare_playback(compare_playback: ComparePlaybackState, step_delay: fl
         compare_playback.random_visits[compare_playback.random_env.robot_pos] = compare_playback.random_visits.get(compare_playback.random_env.robot_pos, 0) + 1
 
     if not compare_playback.learned_done:
-        if compare_playback.learned_agent is None:
-            learned_action = compare_playback.rng.randrange(len(compare_playback.learned_env.ACTIONS))
-        else:
-            learned_action = compare_playback.learned_agent.select_action(compare_playback.learned_state, training=False)
+        learned_action = select_playback_action(
+            agent=compare_playback.learned_agent,
+            state=compare_playback.learned_state,
+            action_count=len(compare_playback.learned_env.ACTIONS),
+            rng=compare_playback.rng,
+        )
 
         next_state, reward, done, _ = compare_playback.learned_env.step(learned_action)
         compare_playback.learned_state = next_state

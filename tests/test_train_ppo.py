@@ -3,6 +3,7 @@ from __future__ import annotations
 from argparse import Namespace
 
 from scripts.train_ppo import (
+    append_imitation_samples,
     build_precleaned_positions,
     build_training_stages,
     normalize_stage_episodes,
@@ -45,3 +46,19 @@ def test_build_training_stages_for_curriculum() -> None:
         ("stage_1_keep_2", 5, [(1, 4), (3, 2)]),
         ("stage_2_keep_0,1,2", 5, []),
     ]
+
+
+def test_append_imitation_samples_respects_capacity() -> None:
+    states = [(1, 1, 0, 17)]
+    actions = [1]
+
+    append_imitation_samples(
+        target_states=states,
+        target_actions=actions,
+        new_states=[(2, 1, 0, 16), (3, 1, 0, 15)],
+        new_actions=[1, 3],
+        capacity=2,
+    )
+
+    assert states == [(2, 1, 0, 16), (3, 1, 0, 15)]
+    assert actions == [1, 3]

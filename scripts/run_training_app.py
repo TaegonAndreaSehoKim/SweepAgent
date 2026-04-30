@@ -37,6 +37,7 @@ from ui.training_app_core import (
     commit_menu_numeric_input,
     compute_training_window_height,
     get_default_algorithm_params,
+    get_algorithm_display_name,
     sync_menu_numeric_inputs,
 )
 from ui.training_app_handlers import (
@@ -349,6 +350,13 @@ def main() -> None:
 
                                 if menu.open_dropdown == "map":
                                     menu.map_name = list(MAP_PRESETS.keys())[idx]
+                                    if menu.algorithm_name == "ppo_guided":
+                                        menu.episodes = (
+                                            6500
+                                            if menu.map_name == "complex_charge_bastion"
+                                            else 5000
+                                        )
+                                        sync_menu_numeric_inputs(menu)
                                     rebuild_training_preview_env(
                                         preview_state=preview,
                                         menu=menu,
@@ -358,6 +366,16 @@ def main() -> None:
                                 elif menu.open_dropdown == "model":
                                     menu.algorithm_name = MODEL_OPTIONS[idx]
                                     menu.algorithm_params = get_default_algorithm_params(menu.algorithm_name)
+                                    if menu.algorithm_name == "dqn":
+                                        menu.episodes = 5000
+                                    elif menu.algorithm_name == "ppo":
+                                        menu.episodes = 5000
+                                    elif menu.algorithm_name == "ppo_guided":
+                                        menu.episodes = (
+                                            6500
+                                            if menu.map_name == "complex_charge_bastion"
+                                            else 5000
+                                        )
                                     sync_menu_numeric_inputs(menu)
                                 elif menu.open_dropdown == "result_view":
                                     menu.result_view = RESULT_VIEW_OPTIONS[idx]
@@ -508,7 +526,7 @@ def main() -> None:
                 width=playback_width,
                 height=playback_height,
                 fonts=fonts,
-                title_text="Learned Greedy Agent" if single_playback.algorithm_name == "q_learning" else "Random Baseline",
+                title_text=get_algorithm_display_name(single_playback.algorithm_name),
                 env=single_playback.env,
                 total_reward=single_playback.total_reward,
                 step_idx=single_playback.step_idx,

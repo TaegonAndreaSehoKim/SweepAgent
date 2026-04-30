@@ -111,6 +111,44 @@ def parse_args() -> argparse.Namespace:
             "If omitted with a positive coefficient, warm-start episodes are reused."
         ),
     )
+    parser.add_argument(
+        "--guided-dagger-coef",
+        type=float,
+        default=0.0,
+        help=(
+            "Coefficient for DAgger-style labels collected from states visited by the "
+            "current PPO policy."
+        ),
+    )
+    parser.add_argument(
+        "--guided-dagger-buffer-capacity",
+        type=int,
+        default=20000,
+        help="Maximum number of guided imitation labels kept per stage.",
+    )
+    parser.add_argument(
+        "--guided-dagger-refresh-every",
+        type=int,
+        default=1,
+        help="Collect DAgger labels from every N training episodes when enabled.",
+    )
+    parser.add_argument(
+        "--guided-dagger-episodes-per-update",
+        type=int,
+        default=0,
+        help=(
+            "Optional extra current-policy episodes to relabel after each PPO update. "
+            "The normal training episodes are relabeled without extra rollouts."
+        ),
+    )
+    parser.add_argument(
+        "--guided-dagger-bc-every",
+        type=int,
+        default=0,
+        help="Run a separate behavior-cloning update on the DAgger buffer every N episodes.",
+    )
+    parser.add_argument("--guided-dagger-bc-epochs", type=int, default=1)
+    parser.add_argument("--guided-dagger-bc-minibatch-size", type=int, default=256)
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--eval-every", type=int, default=0)
     parser.add_argument("--save-best-eval-checkpoint", action="store_true")
@@ -362,6 +400,13 @@ def build_checkpoint_metadata(
         "guided_warm_start_per_stage": args.guided_warm_start_per_stage,
         "guided_imitation_coef": args.guided_imitation_coef,
         "guided_imitation_episodes": args.guided_imitation_episodes,
+        "guided_dagger_coef": args.guided_dagger_coef,
+        "guided_dagger_buffer_capacity": args.guided_dagger_buffer_capacity,
+        "guided_dagger_refresh_every": args.guided_dagger_refresh_every,
+        "guided_dagger_episodes_per_update": args.guided_dagger_episodes_per_update,
+        "guided_dagger_bc_every": args.guided_dagger_bc_every,
+        "guided_dagger_bc_epochs": args.guided_dagger_bc_epochs,
+        "guided_dagger_bc_minibatch_size": args.guided_dagger_bc_minibatch_size,
         "eval_result": eval_result,
         "best_eval_result": best_eval_result or {},
         "best_checkpoint_episodes": best_checkpoint_episodes,
@@ -454,6 +499,51 @@ def collect_guided_samples(
     return states, actions
 
 
+def append_imitation_samples(
+    target_states: list,
+    target_actions: list[int],
+    new_states: list,
+    new_actions: list[int],
+    capacity: int,
+) -> None:
+    if capacity <= 0 or not new_states:
+        return
+    if len(new_states) != len(new_actions):
+        raise ValueError("new_states and new_actions must have the same length.")
+
+    target_states.extend(new_states)
+    target_actions.extend(new_actions)
+    overflow = len(target_states) - capacity
+    if overflow > 0:
+        del target_states[:overflow]
+        del target_actions[:overflow]
+
+
+def collect_policy_labeled_samples(
+    agent: PPOAgent,
+    env,
+    episodes: int,
+) -> tuple[list, list[int]]:
+    states = []
+    actions: list[int] = []
+    if episodes <= 0:
+        return states, actions
+
+    for _ in range(episodes):
+        state = env.reset()
+        done = False
+
+        while not done:
+            guided_action = agent.encoder.guided_action(state)
+            if guided_action is not None:
+                states.append(state)
+                actions.append(guided_action)
+            policy_action, _, _ = agent.select_action(state, training=True)
+            state, _, done, _ = env.step(policy_action)
+
+    return states, actions
+
+
 def run_guided_warm_start(
     agent: PPOAgent,
     states: list,
@@ -532,6 +622,7 @@ def main() -> None:
     losses: list[float] = []
     entropies: list[float] = []
     imitation_losses: list[float] = []
+    dagger_bc_losses: list[float] = []
     rollout: list[PPORolloutStep] = []
     imitation_states = []
     imitation_actions: list[int] = []
@@ -569,6 +660,13 @@ def main() -> None:
     print(f"guided_warm_start_episodes: {args.guided_warm_start_episodes}")
     print(f"guided_imitation_coef: {args.guided_imitation_coef}")
     print(f"guided_imitation_episodes: {args.guided_imitation_episodes}")
+    print(f"guided_dagger_coef: {args.guided_dagger_coef}")
+    print(f"guided_dagger_buffer_capacity: {args.guided_dagger_buffer_capacity}")
+    print(f"guided_dagger_refresh_every: {args.guided_dagger_refresh_every}")
+    print(f"guided_dagger_episodes_per_update: {args.guided_dagger_episodes_per_update}")
+    print(f"guided_dagger_bc_every: {args.guided_dagger_bc_every}")
+    print(f"guided_dagger_bc_epochs: {args.guided_dagger_bc_epochs}")
+    print(f"guided_dagger_bc_minibatch_size: {args.guided_dagger_bc_minibatch_size}")
     print(f"eval_episodes: {args.eval_episodes}")
     print(f"eval_every: {args.eval_every}")
     print(f"save_best_eval_checkpoint: {args.save_best_eval_checkpoint}")
@@ -619,6 +717,10 @@ def main() -> None:
         imitation_states = []
         imitation_actions = []
         active_imitation_coef = 0.0
+        dagger_enabled = (
+            args.guided_dagger_coef > 0.0
+            and args.guided_dagger_buffer_capacity > 0
+        )
         if args.guided_imitation_coef > 0.0:
             imitation_episodes = (
                 args.guided_imitation_episodes
@@ -638,6 +740,15 @@ def main() -> None:
                 f"samples={len(imitation_states)} | "
                 f"coef={active_imitation_coef:.4f}"
             )
+        if dagger_enabled:
+            active_imitation_coef = max(active_imitation_coef, args.guided_dagger_coef)
+            print(
+                "guided_dagger: "
+                f"capacity={args.guided_dagger_buffer_capacity} | "
+                f"refresh_every={args.guided_dagger_refresh_every} | "
+                f"extra_episodes_per_update={args.guided_dagger_episodes_per_update} | "
+                f"coef={active_imitation_coef:.4f}"
+            )
 
         for _ in range(stage_episodes):
             global_episode_idx += 1
@@ -645,8 +756,23 @@ def main() -> None:
             done = False
             episode_reward = 0.0
             termination_reason = "ongoing"
+            label_dagger_episode = (
+                dagger_enabled
+                and args.guided_dagger_refresh_every > 0
+                and global_episode_idx % args.guided_dagger_refresh_every == 0
+            )
 
             while not done:
+                if label_dagger_episode:
+                    guided_action = agent.encoder.guided_action(state)
+                    if guided_action is not None:
+                        append_imitation_samples(
+                            target_states=imitation_states,
+                            target_actions=imitation_actions,
+                            new_states=[state],
+                            new_actions=[guided_action],
+                            capacity=args.guided_dagger_buffer_capacity,
+                        )
                 action, log_prob, value = agent.select_action(state, training=True)
                 next_state, reward, done, termination_reason = env.step_training(action)
                 rollout.append(
@@ -669,18 +795,58 @@ def main() -> None:
                         state=state,
                         imitation_states=imitation_states,
                         imitation_actions=imitation_actions,
-                        imitation_coef=active_imitation_coef,
+                        imitation_coef=(
+                            active_imitation_coef if imitation_states else 0.0
+                        ),
                     )
                     losses.append(metrics["loss"])
                     entropies.append(metrics["entropy"])
                     imitation_losses.append(metrics["imitation_loss"])
                     rollout = []
+                    if (
+                        dagger_enabled
+                        and args.guided_dagger_episodes_per_update > 0
+                    ):
+                        extra_states, extra_actions = collect_policy_labeled_samples(
+                            agent=agent,
+                            env=env,
+                            episodes=args.guided_dagger_episodes_per_update,
+                        )
+                        append_imitation_samples(
+                            target_states=imitation_states,
+                            target_actions=imitation_actions,
+                            new_states=extra_states,
+                            new_actions=extra_actions,
+                            capacity=args.guided_dagger_buffer_capacity,
+                        )
 
             final_info = env.get_episode_info(termination_reason=termination_reason)
             rewards.append(episode_reward)
             cleaned_ratios.append(float(final_info["cleaned_ratio"]))
             successes.append(1.0 if float(final_info["cleaned_ratio"]) == 1.0 else 0.0)
             steps_taken.append(float(final_info["steps_taken"]))
+
+            if (
+                dagger_enabled
+                and args.guided_dagger_bc_every > 0
+                and args.guided_dagger_bc_epochs > 0
+                and global_episode_idx % args.guided_dagger_bc_every == 0
+                and imitation_states
+            ):
+                dagger_bc_metrics = agent.behavior_clone_update(
+                    states=imitation_states,
+                    actions=imitation_actions,
+                    epochs=args.guided_dagger_bc_epochs,
+                    minibatch_size=args.guided_dagger_bc_minibatch_size,
+                )
+                dagger_bc_losses.append(dagger_bc_metrics["bc_loss"])
+                print(
+                    "guided_dagger_bc: "
+                    f"episode={global_episode_idx} | "
+                    f"samples={len(imitation_states)} | "
+                    f"bc_loss={dagger_bc_metrics['bc_loss']:.4f} | "
+                    f"entropy={dagger_bc_metrics['bc_entropy']:.4f}"
+                )
 
             if (
                 global_episode_idx % args.print_every == 0
@@ -692,6 +858,9 @@ def main() -> None:
                 recent_imitation_losses = imitation_losses[
                     -max(1, min(len(imitation_losses), args.print_every)) :
                 ]
+                recent_dagger_bc_losses = dagger_bc_losses[
+                    -max(1, min(len(dagger_bc_losses), args.print_every)) :
+                ]
                 print(
                     f"Episode {global_episode_idx}/{total_training_episodes} | "
                     f"stage={stage_name} | "
@@ -701,7 +870,9 @@ def main() -> None:
                     f"avg_steps={mean(steps_taken[start_idx:]):.2f} | "
                     f"loss={(mean(recent_losses) if recent_losses else 0.0):.4f} | "
                     f"entropy={(mean(recent_entropies) if recent_entropies else 0.0):.4f} | "
-                    f"imitation_loss={(mean(recent_imitation_losses) if recent_imitation_losses else 0.0):.4f}"
+                    f"imitation_loss={(mean(recent_imitation_losses) if recent_imitation_losses else 0.0):.4f} | "
+                    f"dagger_bc_loss={(mean(recent_dagger_bc_losses) if recent_dagger_bc_losses else 0.0):.4f} | "
+                    f"imitation_samples={len(imitation_states)}"
                 )
 
             if (
@@ -757,7 +928,7 @@ def main() -> None:
             state=state,
             imitation_states=imitation_states,
             imitation_actions=imitation_actions,
-            imitation_coef=active_imitation_coef,
+            imitation_coef=active_imitation_coef if imitation_states else 0.0,
         )
         losses.append(metrics["loss"])
         entropies.append(metrics["entropy"])

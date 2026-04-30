@@ -12,7 +12,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from agents.dqn_agent import DQNAgent
+from agents.ppo_agent import PPOAgent
 from agents.q_learning_agent import QLearningAgent
+from utils.dqn_experiment_utils import (
+    get_dqn_best_checkpoint_path,
+    get_dqn_checkpoint_path,
+)
+from utils.experiment_utils import load_or_train_q_agent
+from utils.ppo_experiment_utils import (
+    get_ppo_best_checkpoint_path,
+    get_ppo_checkpoint_path,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -21,8 +32,50 @@ MODEL_OPTIONS = [
     "abstracted_q_learning",
     "battery_adapt_q_learning",
     "curriculum_q_learning",
+    "dqn",
+    "ppo",
+    "ppo_guided",
+    "dqn_best",
+    "ppo_best",
     "random_baseline",
 ]
+
+NON_TRAINABLE_ALGORITHMS = {"random_baseline", "dqn_best", "ppo_best"}
+
+REFERENCE_BEST_CHECKPOINTS: dict[tuple[str, str], Path] = {
+    (
+        "dqn_best",
+        "complex_charge_bastion",
+    ): get_dqn_best_checkpoint_path(
+        map_name="complex_charge_bastion",
+        seed=418,
+        checkpoint_tag="v2relay_shape_finalroute",
+    ),
+    (
+        "ppo_best",
+        "complex_charge_bastion",
+    ): get_ppo_best_checkpoint_path(
+        map_name="complex_charge_bastion",
+        seed=42,
+        checkpoint_tag="ppo_finalrelay_curriculum6500",
+    ),
+    (
+        "ppo_best",
+        "charge_maze_medium",
+    ): get_ppo_best_checkpoint_path(
+        map_name="charge_maze_medium",
+        seed=42,
+        checkpoint_tag="ppo_guidancefix_imitation5000",
+    ),
+    (
+        "ppo_best",
+        "default",
+    ): get_ppo_best_checkpoint_path(
+        map_name="default",
+        seed=42,
+        checkpoint_tag="ppo3000",
+    ),
+}
 
 RESULT_VIEW_OPTIONS = [
     "single_playback",
@@ -40,9 +93,7 @@ EPSILON_START_OPTIONS = [0.30, 0.80, 1.00]
 EPSILON_DECAY_OPTIONS = [0.995, 0.997, 0.999]
 EPSILON_MIN_OPTIONS = [0.03, 0.05, 0.10]
 
-TRAINING_LINE_PATTERN = re.compile(
-    r"Episode\s+(\d+)/(\d+)\s+\|\s+avg_reward=([-\d.]+)\s+\|\s+avg_cleaned_ratio=([\d.]+)%\s+\|\s+success_rate=([\d.]+)%\s+\|\s+epsilon=([\d.]+)"
-)
+TRAINING_LINE_PATTERN = re.compile(r"Episode\s+(\d+)/(\d+)\s+\|\s+(.+)")
 
 MENU_WIDTH = 1040
 MENU_HEIGHT = 820
@@ -142,6 +193,31 @@ ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
         "stage2_epsilon_start": 1.00,
         "stage2_epsilon_decay": 0.99995,
         "stage2_epsilon_min": 0.15,
+    },
+    "dqn": {
+        "learning_rate": 0.0005,
+        "discount_factor": 0.99,
+        "epsilon_start": 1.00,
+        "epsilon_decay": 0.99995,
+        "epsilon_min": 0.10,
+        "guided_exploration_ratio": 0.6,
+        "hidden_size": 256,
+    },
+    "ppo": {
+        "learning_rate": 0.0003,
+        "discount_factor": 0.99,
+        "epsilon_start": 0.0,
+        "epsilon_decay": 0.0,
+        "epsilon_min": 0.0,
+        "hidden_size": 256,
+    },
+    "ppo_guided": {
+        "learning_rate": 0.0003,
+        "discount_factor": 0.99,
+        "epsilon_start": 0.0,
+        "epsilon_decay": 0.0,
+        "epsilon_min": 0.0,
+        "hidden_size": 256,
     },
     "random_baseline": {},
 }
@@ -250,7 +326,23 @@ def get_default_algorithm_params(algorithm_name: str) -> dict[str, float]:
 
 
 def is_trainable_algorithm(algorithm_name: str) -> bool:
-    return algorithm_name != "random_baseline"
+    return algorithm_name not in NON_TRAINABLE_ALGORITHMS
+
+
+def get_algorithm_display_name(algorithm_name: str | None) -> str:
+    display_names = {
+        "q_learning": "Q-learning Greedy Agent",
+        "abstracted_q_learning": "Abstracted Q-learning Agent",
+        "battery_adapt_q_learning": "Battery-adapted Q-learning Agent",
+        "curriculum_q_learning": "Curriculum Q-learning Agent",
+        "dqn": "DQN Agent",
+        "ppo": "PPO Agent",
+        "ppo_guided": "Guided PPO Agent",
+        "dqn_best": "DQN Best Checkpoint",
+        "ppo_best": "PPO Best Checkpoint",
+        "random_baseline": "Random Baseline",
+    }
+    return display_names.get(algorithm_name or "", "Learned Greedy Agent")
 
 
 def get_preview_map_name(algorithm_name: str, selected_map_name: str) -> str:
@@ -286,6 +378,43 @@ def get_playback_target_episodes(
     return selected_episodes
 
 
+def split_episode_budget(total_episodes: int, weights: list[int]) -> list[int]:
+    if total_episodes < len(weights):
+        raise ValueError("total episodes must be at least the number of stages.")
+    if not weights or any(weight <= 0 for weight in weights):
+        raise ValueError("stage weights must be positive.")
+
+    total_weight = sum(weights)
+    raw_allocations = [
+        (total_episodes * weight) / total_weight
+        for weight in weights
+    ]
+    stage_episodes = [max(1, int(value)) for value in raw_allocations]
+    remaining = total_episodes - sum(stage_episodes)
+
+    if remaining > 0:
+        remainders = sorted(
+            range(len(weights)),
+            key=lambda idx: raw_allocations[idx] - int(raw_allocations[idx]),
+            reverse=True,
+        )
+        for idx in remainders[:remaining]:
+            stage_episodes[idx] += 1
+    elif remaining < 0:
+        for idx in sorted(
+            range(len(weights)),
+            key=lambda index: stage_episodes[index],
+            reverse=True,
+        ):
+            while remaining < 0 and stage_episodes[idx] > 1:
+                stage_episodes[idx] -= 1
+                remaining += 1
+            if remaining == 0:
+                break
+
+    return stage_episodes
+
+
 def get_preview_checkpoint_path(
     algorithm_name: str,
     selected_map_name: str,
@@ -300,6 +429,121 @@ def get_preview_checkpoint_path(
         algorithm_params=algorithm_params,
     )
     return get_checkpoint_path(preview_map_name, preview_episodes, seed)
+
+
+def _newest_matching_checkpoint(pattern: str) -> Path | None:
+    candidates = list((PROJECT_ROOT / "outputs" / "checkpoints").glob(pattern))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def get_best_playback_checkpoint_path(
+    algorithm_name: str,
+    map_name: str,
+    seed: int,
+) -> Path:
+    reference_path = REFERENCE_BEST_CHECKPOINTS.get((algorithm_name, map_name))
+    if reference_path is not None and reference_path.exists():
+        return reference_path
+
+    if algorithm_name == "dqn_best":
+        exact_path = get_dqn_best_checkpoint_path(map_name=map_name, seed=seed)
+        if exact_path.exists():
+            return exact_path
+        fallback_path = _newest_matching_checkpoint(
+            f"dqn_agent_{map_name}_best_eval_seed_*.pt"
+        )
+    elif algorithm_name == "ppo_best":
+        exact_path = get_ppo_best_checkpoint_path(map_name=map_name, seed=seed)
+        if exact_path.exists():
+            return exact_path
+        fallback_path = _newest_matching_checkpoint(
+            f"ppo_agent_{map_name}_best_eval_seed_*.pt"
+        )
+    else:
+        raise ValueError(f"Unsupported best-checkpoint algorithm: {algorithm_name}")
+
+    if fallback_path is not None:
+        return fallback_path
+    raise FileNotFoundError(
+        f"No best checkpoint found for algorithm='{algorithm_name}', map='{map_name}'."
+    )
+
+
+def load_playback_agent(
+    algorithm_name: str,
+    map_name: str,
+    episodes: int,
+    seed: int,
+    algorithm_params: dict[str, float] | None = None,
+):
+    if algorithm_name == "random_baseline":
+        return None
+    if algorithm_name == "dqn_best":
+        checkpoint_path = get_best_playback_checkpoint_path(
+            algorithm_name=algorithm_name,
+            map_name=map_name,
+            seed=seed,
+        )
+        return DQNAgent.load(checkpoint_path, device="cpu", training=False)
+    if algorithm_name == "dqn":
+        checkpoint_tag = str((algorithm_params or {}).get("checkpoint_tag", "ui"))
+        best_path = get_dqn_best_checkpoint_path(
+            map_name=map_name,
+            seed=seed,
+            checkpoint_tag=checkpoint_tag,
+        )
+        checkpoint_path = (
+            best_path
+            if best_path.exists()
+            else get_dqn_checkpoint_path(
+                map_name=map_name,
+                episodes=episodes,
+                seed=seed,
+                checkpoint_tag=checkpoint_tag,
+            )
+        )
+        return DQNAgent.load(checkpoint_path, device="cpu", training=False)
+    if algorithm_name == "ppo_best":
+        checkpoint_path = get_best_playback_checkpoint_path(
+            algorithm_name=algorithm_name,
+            map_name=map_name,
+            seed=seed,
+        )
+        return PPOAgent.load(checkpoint_path, device="cpu", training=False)
+    if algorithm_name in {"ppo", "ppo_guided"}:
+        default_tag = "ui_guided" if algorithm_name == "ppo_guided" else "ui"
+        checkpoint_tag = str((algorithm_params or {}).get("checkpoint_tag", default_tag))
+        best_path = get_ppo_best_checkpoint_path(
+            map_name=map_name,
+            seed=seed,
+            checkpoint_tag=checkpoint_tag,
+        )
+        checkpoint_path = (
+            best_path
+            if best_path.exists()
+            else get_ppo_checkpoint_path(
+                map_name=map_name,
+                episodes=episodes,
+                seed=seed,
+                checkpoint_tag=checkpoint_tag,
+            )
+        )
+        return PPOAgent.load(checkpoint_path, device="cpu", training=False)
+    return load_or_train_q_agent(
+        map_name=map_name,
+        num_episodes=episodes,
+        seed=seed,
+    )
+
+
+def select_playback_action(agent, state, action_count: int, rng: random.Random) -> int:
+    if agent is None:
+        return rng.randrange(action_count)
+    if hasattr(agent, "get_policy_action"):
+        return int(agent.get_policy_action(state))
+    return int(agent.select_action(state, training=False))
 
 
 def get_display_hyperparams(algorithm_name: str, algorithm_params: dict[str, float]) -> dict[str, float]:
@@ -580,6 +824,185 @@ def build_training_command(
         if "stage2_epsilon_min" in algorithm_params:
             command.extend(["--stage2-epsilon-min", str(algorithm_params["stage2_epsilon_min"])])
 
+        return command
+
+    if algorithm_name == "dqn":
+        checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui"))
+        command = [
+            sys.executable,
+            "scripts/train_dqn.py",
+            "--map-name",
+            map_name,
+            "--battery-profile",
+            "evaluation",
+            "--episodes",
+            str(episodes),
+            "--seed",
+            str(seed),
+            "--print-every",
+            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            "--learning-rate",
+            str(algorithm_params.get("learning_rate", 0.0005)),
+            "--discount-factor",
+            str(algorithm_params.get("discount_factor", 0.99)),
+            "--epsilon-start",
+            str(algorithm_params.get("epsilon_start", 1.0)),
+            "--epsilon-decay",
+            str(algorithm_params.get("epsilon_decay", 0.99995)),
+            "--epsilon-min",
+            str(algorithm_params.get("epsilon_min", 0.10)),
+            "--batch-size",
+            "128",
+            "--replay-capacity",
+            "100000",
+            "--learning-starts",
+            "1000",
+            "--train-every",
+            "8",
+            "--target-update-interval",
+            "1000",
+            "--hidden-size",
+            str(int(algorithm_params.get("hidden_size", 256))),
+            "--guided-exploration-ratio",
+            str(algorithm_params.get("guided_exploration_ratio", 0.6)),
+            "--eval-episodes",
+            "20",
+            "--eval-every",
+            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            "--feature-version",
+            "2",
+            "--checkpoint-tag",
+            checkpoint_tag,
+            "--save-best-eval-checkpoint",
+        ]
+        return command
+
+    if algorithm_name == "ppo":
+        checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui"))
+        command = [
+            sys.executable,
+            "scripts/train_ppo.py",
+            "--map-name",
+            map_name,
+            "--battery-profile",
+            "evaluation",
+            "--episodes",
+            str(episodes),
+            "--seed",
+            str(seed),
+            "--print-every",
+            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            "--learning-rate",
+            str(algorithm_params.get("learning_rate", 0.0003)),
+            "--discount-factor",
+            str(algorithm_params.get("discount_factor", 0.99)),
+            "--rollout-steps",
+            "2048",
+            "--update-epochs",
+            "4",
+            "--minibatch-size",
+            "256",
+            "--hidden-size",
+            str(int(algorithm_params.get("hidden_size", 256))),
+            "--eval-episodes",
+            "20",
+            "--eval-every",
+            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            "--checkpoint-tag",
+            checkpoint_tag,
+            "--save-best-eval-checkpoint",
+        ]
+        return command
+
+    if algorithm_name == "ppo_guided":
+        checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui_guided"))
+        command = [
+            sys.executable,
+            "scripts/train_ppo.py",
+            "--map-name",
+            map_name,
+            "--battery-profile",
+            "evaluation",
+            "--seed",
+            str(seed),
+            "--print-every",
+            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            "--learning-rate",
+            str(algorithm_params.get("learning_rate", 0.0003)),
+            "--discount-factor",
+            str(algorithm_params.get("discount_factor", 0.99)),
+            "--guided-warm-start-episodes",
+            "20",
+            "--guided-warm-start-epochs",
+            "2",
+            "--guided-warm-start-minibatch-size",
+            "256",
+            "--guided-warm-start-per-stage",
+            "--guided-imitation-coef",
+            "0.2",
+            "--guided-imitation-episodes",
+            "20",
+            "--guided-dagger-coef",
+            "0.75",
+            "--guided-dagger-buffer-capacity",
+            "50000",
+            "--guided-dagger-refresh-every",
+            "1",
+            "--guided-dagger-bc-every",
+            "100",
+            "--guided-dagger-bc-epochs",
+            "2",
+            "--guided-dagger-bc-minibatch-size",
+            "256",
+            "--rollout-steps",
+            "2048",
+            "--update-epochs",
+            "4",
+            "--minibatch-size",
+            "256",
+            "--hidden-size",
+            str(int(algorithm_params.get("hidden_size", 256))),
+            "--eval-episodes",
+            "20",
+            "--eval-every",
+            str(max(1, min(DEFAULT_PRINT_EVERY, episodes))),
+            "--checkpoint-tag",
+            checkpoint_tag,
+            "--save-best-eval-checkpoint",
+        ]
+        if map_name == "complex_charge_bastion":
+            stage_episodes = split_episode_budget(
+                total_episodes=episodes,
+                weights=[800, 1200, 2000, 2500],
+            )
+            command.extend(
+                [
+                    "--curriculum-stage-keep-dirty-indices",
+                    "2",
+                    "0,2",
+                    "1,2",
+                    "full",
+                    "--curriculum-stage-episodes",
+                    *[str(stage_episode) for stage_episode in stage_episodes],
+                ]
+            )
+        elif map_name == "charge_maze_medium":
+            stage_episodes = split_episode_budget(
+                total_episodes=episodes,
+                weights=[1500, 1500, 2000],
+            )
+            command.extend(
+                [
+                    "--curriculum-stage-keep-dirty-indices",
+                    "2",
+                    "1,2",
+                    "full",
+                    "--curriculum-stage-episodes",
+                    *[str(stage_episode) for stage_episode in stage_episodes],
+                ]
+            )
+        else:
+            command.extend(["--episodes", str(episodes)])
         return command
 
     raise ValueError(f"Unsupported training algorithm: {algorithm_name}")
