@@ -268,6 +268,15 @@ PPO has also been added as a policy-gradient baseline:
 
 The practical read is that plain PPO is too weak for charger-relay maps, but guided PPO is now a competitive policy-gradient reference for `complex_charge_bastion`.
 
+SARSA has also been added as an on-policy tabular baseline:
+
+- on `default`, SARSA solves the map after 10000 episodes with a 7-step greedy rollout
+- on `charge_maze_medium`, SARSA with charger context solves the map after 50000 episodes with a 34-step greedy rollout
+- on `complex_charge_bastion`, plain SARSA with charger context stalls at `1/3` cleaned
+- guided SARSA with relay reward shaping solves `complex_charge_bastion` after 100000 episodes with a 155-step greedy rollout
+
+This makes SARSA a useful bridge between the tabular Q-learning family and the guided deep-RL recipes.
+
 ## Performance And CUDA Notes
 
 The tabular Q-learning path is still CPU-bound.
@@ -523,6 +532,7 @@ The current improvement areas are:
 
 - using the relay-aware DQN seed `418` checkpoint as the current strongest `bastion` reference result
 - using the guided PPO final-relay checkpoint as the current policy-gradient `bastion` reference
-- adding SARSA so Q-learning, DQN, PPO, and SARSA can be compared under the same evaluation flow
+- using the guided SARSA seed `42` checkpoint as the current on-policy tabular `bastion` reference
+- building a comparison table across Q-learning, DQN, PPO, and SARSA under the same evaluation flow
 - using the pygame UI for quick visual checks of DQN, PPO, guided PPO, and saved best-eval checkpoints
 - keeping generated checkpoints, plots, logs, and GIFs out of version control

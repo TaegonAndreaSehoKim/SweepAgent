@@ -82,6 +82,10 @@ def test_build_training_command_supports_sarsa() -> None:
     assert command[command.index("--episodes") + 1] == "100"
     assert command[command.index("--print-every") + 1] == "25"
     assert command[command.index("--learning-rate") + 1] == "0.05"
+    assert command[command.index("--battery-profile") + 1] == "evaluation"
+    assert command[command.index("--guided-exploration-ratio") + 1] == "0.6"
+    assert command[command.index("--eval-every") + 1] == "100"
+    assert "--save-best-eval-checkpoint" in command
 
 
 def test_dqn_ui_command_reports_progress_faster_than_eval() -> None:

@@ -352,6 +352,13 @@ def main() -> None:
                                             else 5000
                                         )
                                         sync_menu_numeric_inputs(menu)
+                                    elif menu.algorithm_name == "sarsa":
+                                        menu.episodes = (
+                                            100000
+                                            if menu.map_name == "complex_charge_bastion"
+                                            else 50000
+                                        )
+                                        sync_menu_numeric_inputs(menu)
                                     rebuild_training_preview_env(
                                         preview_state=preview,
                                         menu=menu,
@@ -362,7 +369,11 @@ def main() -> None:
                                     menu.algorithm_name = MODEL_OPTIONS[idx]
                                     menu.algorithm_params = get_default_algorithm_params(menu.algorithm_name)
                                     if menu.algorithm_name == "sarsa":
-                                        menu.episodes = 200000
+                                        menu.episodes = (
+                                            100000
+                                            if menu.map_name == "complex_charge_bastion"
+                                            else 50000
+                                        )
                                     elif menu.algorithm_name == "dqn":
                                         menu.episodes = 5000
                                     elif menu.algorithm_name == "ppo":

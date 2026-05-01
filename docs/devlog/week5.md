@@ -420,12 +420,90 @@ The next DQN attempt should increase guided exploration exposure and maintain ex
 
 ---
 
+## 15. SARSA Baseline And Guided Improvement
+
+SARSA was added as the on-policy tabular comparison point.
+The implementation reuses the existing Q-table serialization and state abstraction machinery, but updates with the selected next action:
+
+`Q(s,a) <- Q(s,a) + alpha * (r + gamma * Q(s',a') - Q(s,a))`
+
+Initial tests showed the baseline is sound:
+
+- `default`, 10000 episodes: greedy eval `avg_reward=106.00`, `avg_steps=7`, `success_rate=100%`
+- `charge_maze_medium`, 50000 episodes with `charger_context`: greedy eval `avg_reward=59.50`, `avg_steps=34`, `success_rate=100%`
+
+Plain SARSA on `complex_charge_bastion` did not solve the hard relay map:
+
+- 50000 episodes
+- evaluation battery
+- `charger_context`
+- greedy eval `avg_reward=-166.50`, `avg_steps=87`, `avg_cleaned_ratio=33.33%`, `success_rate=0%`
+
+The same hard-map pattern appeared again: the policy could reach part of the task, but did not learn the full charger relay chain.
+
+SARSA was then extended with:
+
+- relay-aware guided exploration via the shared `StateFeatureEncoder.guided_action()`
+- relay charger reward shaping flags
+- periodic greedy evaluation
+- best-eval checkpoint saving
+
+The successful `complex_charge_bastion` run used:
+
+- seed `42`
+- episodes `100000`
+- learning rate `0.05`
+- gamma `0.99`
+- epsilon decay `0.99995`
+- epsilon minimum `0.10`
+- guided exploration ratio `0.6`
+- relay progress reward `0.5`
+- relay-away penalty `-0.75`
+- checkpoint tag `guided_relay100k`
+
+Greedy eval first reached full success at episode `70000`:
+
+- `avg_reward = -44.00`
+- `avg_steps = 156`
+- `avg_cleaned_ratio = 100.00%`
+- `success_rate = 100.00%`
+
+Both the best-eval checkpoint and the final 100000-episode checkpoint reproduced the same result over 200 CPU evaluation episodes:
+
+- `200/200` all-cleaned rollouts
+- `avg_reward = -44.00`
+- `avg_steps = 156`
+- `success_rate = 100.00%`
+
+This makes guided SARSA the current on-policy tabular reference for `bastion`.
+It also confirms that the relay guidance and shaping are not only useful for DQN/PPO; they can unlock the hard map for a tabular on-policy method too.
+
+Follow-up numeric tuning kept the same seed and schedule but changed only the guided exploration ratio.
+`guided_exploration_ratio=0.9` improved the best greedy route slightly:
+
+- checkpoint tag `guided09_relay100k`
+- best eval at episode `80000`
+- `avg_reward = -43.50`
+- `avg_steps = 155`
+- `avg_cleaned_ratio = 100.00%`
+- `success_rate = 100.00%`
+
+The best checkpoint reproduced the same `155`-step all-cleaned rollout over 200 CPU evaluation episodes.
+Two nearby variants were worse:
+
+- fine-tuning the `guided_relay100k` best checkpoint with `gamma=0.995`, lower epsilon, and `guided=0.8` regressed to `2/3` at best
+- `guided=0.95` solved the map but returned to a `156`-step route
+- `guided=0.9` with learning rate `0.03` failed to reach full greedy success
+
+---
+
 ## Next Steps
 
 The most useful next steps from here are:
 
 - treat the relay-aware DQN seed `418` result as the current strongest `bastion` reference
 - treat the guided PPO final-relay best-eval checkpoint as the current policy-gradient `bastion` reference
+- treat the guided SARSA seed `42` tag `guided09_relay100k` checkpoint as the current on-policy tabular `bastion` reference
+- build the Q-learning vs DQN vs PPO vs SARSA comparison table
 - use the UI for quick visual checks of DQN, PPO, guided PPO, and saved best-eval checkpoints
-- add SARSA after PPO stabilizes enough for a fair comparison table
 - keep generated checkpoints, plots, logs, and GIFs out of version control

@@ -200,8 +200,10 @@ ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
         "learning_rate": 0.05,
         "discount_factor": 0.99,
         "epsilon_start": 1.00,
-        "epsilon_decay": 0.99999,
-        "epsilon_min": 0.20,
+        "epsilon_decay": 0.99995,
+        "epsilon_min": 0.10,
+        "guided_exploration_ratio": 0.6,
+        "checkpoint_tag": "ui_guided",
     },
     "dqn": {
         "learning_rate": 0.0005,
@@ -450,7 +452,13 @@ def get_preview_checkpoint_path(
         algorithm_params=algorithm_params,
     )
     if algorithm_name == "sarsa":
-        return get_sarsa_checkpoint_path(preview_map_name, preview_episodes, seed)
+        checkpoint_tag = str((algorithm_params or {}).get("checkpoint_tag", "ui_guided"))
+        return get_sarsa_checkpoint_path(
+            preview_map_name,
+            preview_episodes,
+            seed,
+            checkpoint_tag=checkpoint_tag,
+        )
     return get_checkpoint_path(preview_map_name, preview_episodes, seed)
 
 
@@ -555,12 +563,24 @@ def load_playback_agent(
         )
         return PPOAgent.load(checkpoint_path, device="cpu", training=False)
     if algorithm_name == "sarsa":
-        return SarsaAgent.load(
-            get_sarsa_checkpoint_path(
+        checkpoint_tag = str((algorithm_params or {}).get("checkpoint_tag", "ui_guided"))
+        best_path = get_sarsa_best_checkpoint_path(
+            map_name=map_name,
+            seed=seed,
+            checkpoint_tag=checkpoint_tag,
+        )
+        checkpoint_path = (
+            best_path
+            if best_path.exists()
+            else get_sarsa_checkpoint_path(
                 map_name=map_name,
                 episodes=episodes,
                 seed=seed,
+                checkpoint_tag=checkpoint_tag,
             )
+        )
+        return SarsaAgent.load(
+            checkpoint_path
         )
     return load_or_train_q_agent(
         map_name=map_name,
@@ -777,12 +797,16 @@ def build_training_command(
         return command
 
     if algorithm_name == "sarsa":
+        checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui_guided"))
         progress_every = get_ui_training_progress_interval(episodes)
+        eval_every = get_deep_training_eval_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_sarsa.py",
             "--map-name",
             map_name,
+            "--battery-profile",
+            "evaluation",
             "--episodes",
             str(episodes),
             "--seed",
@@ -801,6 +825,27 @@ def build_training_command(
             command.extend(["--epsilon-decay", str(algorithm_params["epsilon_decay"])])
         if "epsilon_min" in algorithm_params:
             command.extend(["--epsilon-min", str(algorithm_params["epsilon_min"])])
+        command.extend(
+            [
+                "--state-abstraction-mode",
+                "charger_context",
+                "--safety-margin-bucket-size",
+                "5",
+                "--guided-exploration-ratio",
+                str(algorithm_params.get("guided_exploration_ratio", 0.6)),
+                "--reward-move-toward-relay-charger",
+                "0.5",
+                "--penalty-move-away-from-relay-charger",
+                "-0.75",
+                "--eval-episodes",
+                "20",
+                "--eval-every",
+                str(eval_every),
+                "--checkpoint-tag",
+                checkpoint_tag,
+                "--save-best-eval-checkpoint",
+            ]
+        )
 
         return command
 
@@ -1104,10 +1149,30 @@ def get_checkpoint_path(map_name: str, episodes: int, seed: int) -> Path:
     )
 
 
-def get_sarsa_checkpoint_path(map_name: str, episodes: int, seed: int) -> Path:
+def get_sarsa_checkpoint_path(
+    map_name: str,
+    episodes: int,
+    seed: int,
+    checkpoint_tag: str = "",
+) -> Path:
+    tag_suffix = f"_{checkpoint_tag}" if checkpoint_tag else ""
     return (
         PROJECT_ROOT
         / "outputs"
         / "checkpoints"
-        / f"sarsa_agent_{map_name}_ep_{episodes}_seed_{seed}.json"
+        / f"sarsa_agent_{map_name}_ep_{episodes}_seed_{seed}{tag_suffix}.json"
+    )
+
+
+def get_sarsa_best_checkpoint_path(
+    map_name: str,
+    seed: int,
+    checkpoint_tag: str = "",
+) -> Path:
+    tag_suffix = f"_{checkpoint_tag}" if checkpoint_tag else ""
+    return (
+        PROJECT_ROOT
+        / "outputs"
+        / "checkpoints"
+        / f"sarsa_agent_{map_name}_best_eval_seed_{seed}{tag_suffix}.json"
     )
