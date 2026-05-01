@@ -217,7 +217,6 @@ def main() -> None:
     while True:
         mouse_clicked = False
         mouse_pos = pygame.mouse.get_pos()
-        max_scroll = 0
 
         menu_buttons = [
             ui_button(
@@ -276,10 +275,6 @@ def main() -> None:
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_clicked = True
-
-            if event.type == pygame.MOUSEWHEEL and app_state == "training":
-                training.log_scroll_offset -= event.y
-                training.log_scroll_offset = max(0, min(training.log_scroll_offset, max_scroll))
 
         if app_state == "training":
             next_state = update_training_from_subprocess(
@@ -455,7 +450,7 @@ def main() -> None:
             if screen.get_width() != MENU_WIDTH or screen.get_height() != training_height:
                 screen = pygame.display.set_mode((MENU_WIDTH, training_height))
 
-            _, max_scroll = draw_training_screen(
+            draw_training_screen(
                 screen=screen,
                 width=MENU_WIDTH,
                 height=training_height,
@@ -465,7 +460,6 @@ def main() -> None:
                 episodes=menu.episodes,
                 latest_metrics=training.latest_metrics,
                 log_lines=training.log_lines,
-                log_scroll_offset=training.log_scroll_offset,
                 preview_env=preview.env,
                 preview_reward=preview.total_reward,
                 preview_step=preview.step_idx,

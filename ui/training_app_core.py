@@ -135,15 +135,13 @@ SUCCESS_FILL = (25, 135, 84)
 CLEANED_FILL = (255, 193, 7)
 EPSILON_FILL = (111, 66, 193)
 
-SCROLL_TRACK = (236, 240, 244)
-SCROLL_THUMB = (173, 181, 189)
-
 CURRICULUM_STAGE1_MAP = "charge_maze_medium"
 CURRICULUM_STAGE1_MIN_EPISODES = 20000
 CURRICULUM_STAGE2_MIN_EPISODES = 50000
 DEFAULT_BATTERY_ADAPT_STAGE2_EPISODES = 50000
-DEFAULT_PRINT_EVERY = 1000
-DEEP_TRAINING_PROGRESS_EVERY = 250
+UI_TRAINING_PROGRESS_EVERY = 25
+DEEP_TRAINING_EVAL_EVERY = 250
+MAX_TRAINING_LOG_LINES = 1000
 
 MENU_NUMERIC_FIELDS = (
     "episodes",
@@ -430,8 +428,12 @@ def split_episode_budget(total_episodes: int, weights: list[int]) -> list[int]:
     return stage_episodes
 
 
-def get_deep_training_progress_interval(episodes: int) -> int:
-    return max(1, min(DEEP_TRAINING_PROGRESS_EVERY, episodes))
+def get_ui_training_progress_interval(episodes: int) -> int:
+    return max(1, min(UI_TRAINING_PROGRESS_EVERY, episodes))
+
+
+def get_deep_training_eval_interval(episodes: int) -> int:
+    return max(1, min(DEEP_TRAINING_EVAL_EVERY, episodes))
 
 
 def get_preview_checkpoint_path(
@@ -715,6 +717,7 @@ def build_training_command(
     algorithm_params = algorithm_params or {}
 
     if algorithm_name == "q_learning":
+        progress_every = get_ui_training_progress_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_q_learning.py",
@@ -725,7 +728,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            str(DEFAULT_PRINT_EVERY),
+            str(progress_every),
         ]
 
         if "learning_rate" in algorithm_params:
@@ -742,6 +745,7 @@ def build_training_command(
         return command
 
     if algorithm_name == "abstracted_q_learning":
+        progress_every = get_ui_training_progress_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_q_learning.py",
@@ -752,7 +756,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            str(DEFAULT_PRINT_EVERY),
+            str(progress_every),
             "--state-abstraction-mode",
             "charger_context",
             "--safety-margin-bucket-size",
@@ -773,6 +777,7 @@ def build_training_command(
         return command
 
     if algorithm_name == "sarsa":
+        progress_every = get_ui_training_progress_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_sarsa.py",
@@ -783,7 +788,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            str(DEFAULT_PRINT_EVERY),
+            str(progress_every),
         ]
 
         if "learning_rate" in algorithm_params:
@@ -801,6 +806,7 @@ def build_training_command(
 
     if algorithm_name == "battery_adapt_q_learning":
         stage2_episodes = get_battery_adapt_stage2_episodes(algorithm_params)
+        progress_every = get_ui_training_progress_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_q_battery_adapt.py",
@@ -813,7 +819,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            str(DEFAULT_PRINT_EVERY),
+            str(progress_every),
         ]
 
         if "stage1_learning_rate" in algorithm_params:
@@ -841,6 +847,7 @@ def build_training_command(
         return command
 
     if algorithm_name == "curriculum_q_learning":
+        progress_every = get_ui_training_progress_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_q_curriculum.py",
@@ -855,7 +862,7 @@ def build_training_command(
             "--seed",
             str(seed),
             "--print-every",
-            str(DEFAULT_PRINT_EVERY),
+            str(progress_every),
         ]
 
         if "stage1_learning_rate" in algorithm_params:
@@ -884,7 +891,8 @@ def build_training_command(
 
     if algorithm_name == "dqn":
         checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui"))
-        progress_every = get_deep_training_progress_interval(episodes)
+        progress_every = get_ui_training_progress_interval(episodes)
+        eval_every = get_deep_training_eval_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_dqn.py",
@@ -925,7 +933,7 @@ def build_training_command(
             "--eval-episodes",
             "20",
             "--eval-every",
-            str(progress_every),
+            str(eval_every),
             "--feature-version",
             "2",
             "--checkpoint-tag",
@@ -936,7 +944,8 @@ def build_training_command(
 
     if algorithm_name == "ppo":
         checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui"))
-        progress_every = get_deep_training_progress_interval(episodes)
+        progress_every = get_ui_training_progress_interval(episodes)
+        eval_every = get_deep_training_eval_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_ppo.py",
@@ -965,7 +974,7 @@ def build_training_command(
             "--eval-episodes",
             "20",
             "--eval-every",
-            str(progress_every),
+            str(eval_every),
             "--checkpoint-tag",
             checkpoint_tag,
             "--save-best-eval-checkpoint",
@@ -974,7 +983,8 @@ def build_training_command(
 
     if algorithm_name == "ppo_guided":
         checkpoint_tag = str(algorithm_params.get("checkpoint_tag", "ui_guided"))
-        progress_every = get_deep_training_progress_interval(episodes)
+        progress_every = get_ui_training_progress_interval(episodes)
+        eval_every = get_deep_training_eval_interval(episodes)
         command = [
             sys.executable,
             "scripts/train_ppo.py",
@@ -1024,7 +1034,7 @@ def build_training_command(
             "--eval-episodes",
             "20",
             "--eval-every",
-            str(progress_every),
+            str(eval_every),
             "--checkpoint-tag",
             checkpoint_tag,
             "--save-best-eval-checkpoint",

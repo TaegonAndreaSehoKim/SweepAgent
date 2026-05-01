@@ -80,10 +80,11 @@ def test_build_training_command_supports_sarsa() -> None:
 
     assert "scripts/train_sarsa.py" in command
     assert command[command.index("--episodes") + 1] == "100"
+    assert command[command.index("--print-every") + 1] == "25"
     assert command[command.index("--learning-rate") + 1] == "0.05"
 
 
-def test_dqn_ui_command_reports_progress_every_250_episodes() -> None:
+def test_dqn_ui_command_reports_progress_faster_than_eval() -> None:
     command = build_training_command(
         algorithm_name="dqn",
         map_name="complex_charge_bastion",
@@ -92,7 +93,7 @@ def test_dqn_ui_command_reports_progress_every_250_episodes() -> None:
         algorithm_params={"checkpoint_tag": "ui"},
     )
 
-    assert command[command.index("--print-every") + 1] == "250"
+    assert command[command.index("--print-every") + 1] == "25"
     assert command[command.index("--eval-every") + 1] == "250"
 
 

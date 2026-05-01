@@ -6,6 +6,7 @@ import time
 from utils.experiment_utils import build_env
 from utils.ui_utils import reset_panel_state
 from ui.training_app_core import (
+    MAX_TRAINING_LOG_LINES,
     PREVIEW_STEP_INTERVAL_SEC,
     TRAINING_LINE_PATTERN,
     build_training_command,
@@ -68,7 +69,6 @@ def start_selected_flow(
 ) -> str:
     training.latest_metrics.clear()
     training.log_lines.clear()
-    training.log_scroll_offset = 0
 
     rebuild_training_preview_env(
         preview_state=preview,
@@ -166,6 +166,9 @@ def update_training_from_subprocess(
 ) -> str | None:
     for line in training.runner.poll_lines():
         training.log_lines.append(line)
+        if len(training.log_lines) > MAX_TRAINING_LOG_LINES:
+            overflow = len(training.log_lines) - MAX_TRAINING_LOG_LINES
+            del training.log_lines[:overflow]
         match = TRAINING_LINE_PATTERN.search(line)
         if match:
             metrics: dict[str, str] = {}

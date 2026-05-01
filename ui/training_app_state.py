@@ -34,7 +34,6 @@ class TrainingState:
     runner: TrainingRunner = field(default_factory=TrainingRunner)
     latest_metrics: dict[str, str] = field(default_factory=dict)
     log_lines: list[str] = field(default_factory=list)
-    log_scroll_offset: int = 0
 
 
 @dataclass

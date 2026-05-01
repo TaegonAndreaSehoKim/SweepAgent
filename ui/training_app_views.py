@@ -15,8 +15,6 @@ from ui.training_app_core import (
     DROPDOWN_BG,
     DROPDOWN_HOVER_BG,
     PROGRESS_BG,
-    SCROLL_TRACK,
-    SCROLL_THUMB,
     PLAYBACK_TITLE_AREA_HEIGHT,
     PLAYBACK_CONTROL_BAR_HEIGHT,
     PLAYBACK_TOP_RESERVED,
@@ -642,8 +640,7 @@ def draw_training_log_panel(
     fonts,
     panel_rect: pygame.Rect,
     log_lines: list[str],
-    scroll_offset: int,
-) -> int:
+) -> None:
     pygame.draw.rect(screen, PANEL_BG, panel_rect, border_radius=10)
     pygame.draw.rect(screen, PANEL_BORDER_COLOR, panel_rect, width=2, border_radius=10)
 
@@ -654,27 +651,12 @@ def draw_training_log_panel(
     line_height = 20
 
     visible_lines = max(1, content_rect.height // line_height)
-    max_scroll = max(0, len(log_lines) - visible_lines)
-    scroll_offset = max(0, min(scroll_offset, max_scroll))
-
-    visible_slice = log_lines[scroll_offset : scroll_offset + visible_lines]
+    visible_slice = log_lines[-visible_lines:]
     y = content_rect.top
     for line in visible_slice:
         text_surface = small_font(fonts).render(line, True, TEXT_COLOR)
         screen.blit(text_surface, (content_rect.left, y))
         y += line_height
-
-    if max_scroll > 0:
-        track_rect = pygame.Rect(panel_rect.right - 16, content_rect.top, 8, content_rect.height)
-        pygame.draw.rect(screen, SCROLL_TRACK, track_rect, border_radius=4)
-
-        thumb_height = max(24, int(track_rect.height * (visible_lines / len(log_lines))))
-        thumb_travel = track_rect.height - thumb_height
-        thumb_y = track_rect.top + int(thumb_travel * (scroll_offset / max_scroll))
-        thumb_rect = pygame.Rect(track_rect.left, thumb_y, track_rect.width, thumb_height)
-        pygame.draw.rect(screen, SCROLL_THUMB, thumb_rect, border_radius=4)
-
-    return max_scroll
 
 
 def draw_training_graph_panel(
@@ -816,7 +798,6 @@ def draw_training_screen(
     episodes: int,
     latest_metrics: dict[str, str],
     log_lines: list[str],
-    log_scroll_offset: int,
     preview_env,
     preview_reward: float,
     preview_step: int,
@@ -829,7 +810,7 @@ def draw_training_screen(
     cleaned_fill: tuple[int, int, int],
     success_fill: tuple[int, int, int],
     epsilon_fill: tuple[int, int, int],
-) -> tuple[pygame.Rect, int]:
+) -> pygame.Rect:
     screen.fill(BACKGROUND_COLOR)
     mouse_pos = pygame.mouse.get_pos()
 
@@ -850,7 +831,7 @@ def draw_training_screen(
     graph_rect = pygame.Rect(40, log_rect.bottom + TRAINING_GAP, width - 80, TRAINING_GRAPH_HEIGHT)
 
     draw_training_metrics_panel(screen, fonts, metrics_rect, latest_metrics)
-    max_scroll = draw_training_log_panel(screen, fonts, log_rect, log_lines, log_scroll_offset)
+    draw_training_log_panel(screen, fonts, log_rect, log_lines)
     draw_training_graph_panel(
         screen,
         fonts,
@@ -865,7 +846,7 @@ def draw_training_screen(
     for button in buttons:
         draw_button(screen, button, fonts, mouse_pos)
 
-    return log_rect, max_scroll
+    return log_rect
 
 
 def draw_playback_title_bar(
