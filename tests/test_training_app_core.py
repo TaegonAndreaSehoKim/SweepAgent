@@ -20,6 +20,8 @@ class StubPolicyAgent:
 def test_best_checkpoint_algorithms_are_playback_only() -> None:
     assert "dqn_best" in MODEL_OPTIONS
     assert "ppo_best" in MODEL_OPTIONS
+    assert "sarsa" in MODEL_OPTIONS
+    assert is_trainable_algorithm("sarsa")
     assert is_trainable_algorithm("dqn")
     assert is_trainable_algorithm("ppo")
     assert is_trainable_algorithm("ppo_guided")
@@ -31,6 +33,7 @@ def test_best_checkpoint_algorithms_have_display_names() -> None:
     assert get_algorithm_display_name("dqn_best") == "DQN Best Checkpoint"
     assert get_algorithm_display_name("ppo_best") == "PPO Best Checkpoint"
     assert get_algorithm_display_name("ppo_guided") == "Guided PPO Agent"
+    assert get_algorithm_display_name("sarsa") == "SARSA Agent"
 
 
 def test_select_playback_action_prefers_policy_action() -> None:
@@ -58,6 +61,26 @@ def test_build_training_command_supports_dqn() -> None:
     assert command[command.index("--print-every") + 1] == "10"
     assert command[command.index("--eval-every") + 1] == "10"
     assert command[command.index("--checkpoint-tag") + 1] == "ui"
+
+
+def test_build_training_command_supports_sarsa() -> None:
+    command = build_training_command(
+        algorithm_name="sarsa",
+        map_name="default",
+        episodes=100,
+        seed=42,
+        algorithm_params={
+            "learning_rate": 0.05,
+            "discount_factor": 0.99,
+            "epsilon_start": 1.0,
+            "epsilon_decay": 0.999,
+            "epsilon_min": 0.2,
+        },
+    )
+
+    assert "scripts/train_sarsa.py" in command
+    assert command[command.index("--episodes") + 1] == "100"
+    assert command[command.index("--learning-rate") + 1] == "0.05"
 
 
 def test_dqn_ui_command_reports_progress_every_250_episodes() -> None:

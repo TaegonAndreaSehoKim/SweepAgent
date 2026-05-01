@@ -366,7 +366,9 @@ def main() -> None:
                                 elif menu.open_dropdown == "model":
                                     menu.algorithm_name = MODEL_OPTIONS[idx]
                                     menu.algorithm_params = get_default_algorithm_params(menu.algorithm_name)
-                                    if menu.algorithm_name == "dqn":
+                                    if menu.algorithm_name == "sarsa":
+                                        menu.episodes = 200000
+                                    elif menu.algorithm_name == "dqn":
                                         menu.episodes = 5000
                                     elif menu.algorithm_name == "ppo":
                                         menu.episodes = 5000

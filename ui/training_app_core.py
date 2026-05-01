@@ -16,6 +16,7 @@ from typing import Callable
 from agents.dqn_agent import DQNAgent
 from agents.ppo_agent import PPOAgent
 from agents.q_learning_agent import QLearningAgent
+from agents.sarsa_agent import SarsaAgent
 from utils.dqn_experiment_utils import (
     get_dqn_best_checkpoint_path,
     get_dqn_checkpoint_path,
@@ -33,6 +34,7 @@ MODEL_OPTIONS = [
     "abstracted_q_learning",
     "battery_adapt_q_learning",
     "curriculum_q_learning",
+    "sarsa",
     "dqn",
     "ppo",
     "ppo_guided",
@@ -196,6 +198,13 @@ ALGORITHM_DEFAULT_PARAMS: dict[str, dict[str, float]] = {
         "stage2_epsilon_decay": 0.99995,
         "stage2_epsilon_min": 0.15,
     },
+    "sarsa": {
+        "learning_rate": 0.05,
+        "discount_factor": 0.99,
+        "epsilon_start": 1.00,
+        "epsilon_decay": 0.99999,
+        "epsilon_min": 0.20,
+    },
     "dqn": {
         "learning_rate": 0.0005,
         "discount_factor": 0.99,
@@ -340,6 +349,7 @@ def get_algorithm_display_name(algorithm_name: str | None) -> str:
         "abstracted_q_learning": "Abstracted Q-learning Agent",
         "battery_adapt_q_learning": "Battery-adapted Q-learning Agent",
         "curriculum_q_learning": "Curriculum Q-learning Agent",
+        "sarsa": "SARSA Agent",
         "dqn": "DQN Agent",
         "ppo": "PPO Agent",
         "ppo_guided": "Guided PPO Agent",
@@ -437,6 +447,8 @@ def get_preview_checkpoint_path(
         selected_episodes,
         algorithm_params=algorithm_params,
     )
+    if algorithm_name == "sarsa":
+        return get_sarsa_checkpoint_path(preview_map_name, preview_episodes, seed)
     return get_checkpoint_path(preview_map_name, preview_episodes, seed)
 
 
@@ -540,6 +552,14 @@ def load_playback_agent(
             )
         )
         return PPOAgent.load(checkpoint_path, device="cpu", training=False)
+    if algorithm_name == "sarsa":
+        return SarsaAgent.load(
+            get_sarsa_checkpoint_path(
+                map_name=map_name,
+                episodes=episodes,
+                seed=seed,
+            )
+        )
     return load_or_train_q_agent(
         map_name=map_name,
         num_episodes=episodes,
@@ -737,6 +757,33 @@ def build_training_command(
             "charger_context",
             "--safety-margin-bucket-size",
             "5",
+        ]
+
+        if "learning_rate" in algorithm_params:
+            command.extend(["--learning-rate", str(algorithm_params["learning_rate"])])
+        if "discount_factor" in algorithm_params:
+            command.extend(["--discount-factor", str(algorithm_params["discount_factor"])])
+        if "epsilon_start" in algorithm_params:
+            command.extend(["--epsilon-start", str(algorithm_params["epsilon_start"])])
+        if "epsilon_decay" in algorithm_params:
+            command.extend(["--epsilon-decay", str(algorithm_params["epsilon_decay"])])
+        if "epsilon_min" in algorithm_params:
+            command.extend(["--epsilon-min", str(algorithm_params["epsilon_min"])])
+
+        return command
+
+    if algorithm_name == "sarsa":
+        command = [
+            sys.executable,
+            "scripts/train_sarsa.py",
+            "--map-name",
+            map_name,
+            "--episodes",
+            str(episodes),
+            "--seed",
+            str(seed),
+            "--print-every",
+            str(DEFAULT_PRINT_EVERY),
         ]
 
         if "learning_rate" in algorithm_params:
@@ -1044,4 +1091,13 @@ def get_checkpoint_path(map_name: str, episodes: int, seed: int) -> Path:
         / "outputs"
         / "checkpoints"
         / f"q_learning_agent_{map_name}_ep_{episodes}_seed_{seed}.json"
+    )
+
+
+def get_sarsa_checkpoint_path(map_name: str, episodes: int, seed: int) -> Path:
+    return (
+        PROJECT_ROOT
+        / "outputs"
+        / "checkpoints"
+        / f"sarsa_agent_{map_name}_ep_{episodes}_seed_{seed}.json"
     )

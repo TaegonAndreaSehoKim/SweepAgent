@@ -550,6 +550,7 @@ def draw_menu(
         "Recommended baseline for hard maps: 200000 episodes, gamma 0.99, epsilon_decay 0.99999.",
         "abstracted_q_learning adds charger-region and remaining-dirty context inside the Q-table while keeping the env unchanged.",
         "battery_adapt_q_learning uses Stage1 as training-battery pretrain and Stage2 as evaluation-battery finetune.",
+        "sarsa runs the on-policy tabular baseline for comparison with Q-learning.",
         "dqn and ppo launch script training; dqn_best and ppo_best replay existing best-eval checkpoints.",
         "ppo_guided runs the staged guided-imitation recipe used for the hard charge maps.",
         "random_baseline skips training and jumps directly to playback.",
