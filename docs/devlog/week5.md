@@ -495,6 +495,36 @@ Two nearby variants were worse:
 - `guided=0.95` solved the map but returned to a `156`-step route
 - `guided=0.9` with learning rate `0.03` failed to reach full greedy success
 
+To make SARSA comparison repeatable, `scripts/compare_sarsa_variants.py` now runs a controlled ablation matrix:
+
+- `plain`: no guided exploration and no relay shaping
+- `shaping`: relay reward shaping only
+- `guided`: relay-aware guided exploration only
+- `guided_shaping`: guided exploration plus relay reward shaping
+
+The default command is:
+
+```bash
+python scripts/compare_sarsa_variants.py --map-name complex_charge_bastion --episodes 100000 --seed 42
+```
+
+It keeps the same SARSA schedule used by the current best guided run, saves best-eval checkpoints for each variant, reevaluates the saved best checkpoint, and writes a CSV summary under `outputs/logs/`.
+
+The 100000-episode `complex_charge_bastion` run with seed `42` produced:
+
+| variant | best episode | cleaned ratio | success rate | average steps |
+| --- | ---: | ---: | ---: | ---: |
+| `plain` | 100000 | 66.67% | 0.00% | 87 |
+| `shaping` | 100000 | 100.00% | 100.00% | 192 |
+| `guided` | 90000 | 33.33% | 0.00% | 87 |
+| `guided_shaping` | 80000 | 100.00% | 100.00% | 155 |
+
+This isolates the important behavior:
+
+- reward shaping alone can unlock the charger relay pattern, but with a longer route
+- guided exploration alone does not solve `bastion`
+- guided exploration plus relay shaping remains the best SARSA recipe and reproduces the 155-step successful route
+
 ---
 
 ## Next Steps
@@ -504,6 +534,7 @@ The most useful next steps from here are:
 - treat the relay-aware DQN seed `418` result as the current strongest `bastion` reference
 - treat the guided PPO final-relay best-eval checkpoint as the current policy-gradient `bastion` reference
 - treat the guided SARSA seed `42` tag `guided09_relay100k` checkpoint as the current on-policy tabular `bastion` reference
+- use the SARSA ablation CSV when discussing whether guidance or reward shaping drove the hard-map improvement
 - build the Q-learning vs DQN vs PPO vs SARSA comparison table
 - use the UI for quick visual checks of DQN, PPO, guided PPO, and saved best-eval checkpoints
 - keep generated checkpoints, plots, logs, and GIFs out of version control

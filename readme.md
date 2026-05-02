@@ -480,6 +480,34 @@ The current `complex_charge_bastion` guided PPO reference uses a final-relay cur
 python scripts/train_ppo.py --map-name complex_charge_bastion --battery-profile evaluation --seed 42 --print-every 250 --learning-rate 0.0003 --discount-factor 0.99 --curriculum-stage-keep-dirty-indices 2 0,2 1,2 full --curriculum-stage-episodes 800 1200 2000 2500 --guided-warm-start-episodes 20 --guided-warm-start-epochs 2 --guided-warm-start-minibatch-size 256 --guided-warm-start-per-stage --guided-imitation-coef 0.2 --guided-imitation-episodes 20 --guided-dagger-coef 0.75 --guided-dagger-buffer-capacity 50000 --guided-dagger-refresh-every 1 --guided-dagger-bc-every 100 --guided-dagger-bc-epochs 2 --guided-dagger-bc-minibatch-size 256 --rollout-steps 2048 --update-epochs 4 --minibatch-size 256 --hidden-size 256 --eval-episodes 20 --eval-every 250 --save-best-eval-checkpoint --checkpoint-tag ppo_finalrelay_curriculum6500
 ```
 
+### Compare SARSA variants
+
+Use the SARSA variant comparison script to isolate the effect of relay shaping and guided exploration:
+
+```bash
+python scripts/compare_sarsa_variants.py --map-name complex_charge_bastion --episodes 100000 --seed 42
+```
+
+By default this runs four variants under the same schedule and writes a CSV summary under `outputs/logs/`:
+
+- `plain`: no guided exploration and no relay shaping
+- `shaping`: relay reward shaping only
+- `guided`: relay-aware guided exploration only
+- `guided_shaping`: guided exploration plus relay reward shaping
+
+A `100000`-episode `complex_charge_bastion` ablation with seed `42` produced:
+
+| variant | best episode | cleaned ratio | success rate | average steps |
+| --- | ---: | ---: | ---: | ---: |
+| `plain` | 100000 | 66.67% | 0.00% | 87 |
+| `shaping` | 100000 | 100.00% | 100.00% | 192 |
+| `guided` | 90000 | 33.33% | 0.00% | 87 |
+| `guided_shaping` | 80000 | 100.00% | 100.00% | 155 |
+
+The read is that relay reward shaping is sufficient to unlock the map for SARSA, while guided exploration alone is not. The best SARSA result remains `guided_shaping`, which reproduces the 155-step successful route.
+
+For a quick command check without training, add `--dry-run`. For a shorter screening pass, reduce `--episodes` and `--comparison-eval-episodes`.
+
 ### Run batch training in parallel
 
 ```bash
@@ -533,6 +561,7 @@ The current improvement areas are:
 - using the relay-aware DQN seed `418` checkpoint as the current strongest `bastion` reference result
 - using the guided PPO final-relay checkpoint as the current policy-gradient `bastion` reference
 - using the guided SARSA seed `42` checkpoint as the current on-policy tabular `bastion` reference
+- using SARSA ablation results to separate plain SARSA, shaping-only, guided-only, and guided+shaping effects
 - building a comparison table across Q-learning, DQN, PPO, and SARSA under the same evaluation flow
 - using the pygame UI for quick visual checks of DQN, PPO, guided PPO, and saved best-eval checkpoints
 - keeping generated checkpoints, plots, logs, and GIFs out of version control
