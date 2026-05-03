@@ -525,6 +525,37 @@ This isolates the important behavior:
 - guided exploration alone does not solve `bastion`
 - guided exploration plus relay shaping remains the best SARSA recipe and reproduces the 155-step successful route
 
+## 16. Cross-Algorithm Bastion Comparison
+
+`scripts/compare_all_algorithms.py` now evaluates the current reference checkpoints for Q-learning, DQN, PPO, and SARSA under one shared evaluation loop.
+It writes both CSV and Markdown outputs so the same run can feed plotting, spreadsheet checks, and report text.
+
+Default command:
+
+```bash
+python scripts/compare_all_algorithms.py --map-name complex_charge_bastion --eval-episodes 200
+```
+
+The current `complex_charge_bastion` reference comparison is:
+
+| algorithm | reference | cleaned ratio | success rate | average steps | average reward |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Q-learning | battery-adapt 400k seed 505 | 66.67% | 0.00% | 87 | -100.50 |
+| DQN | seed 418 relay-shape final route | 100.00% | 100.00% | 168 | -83.50 |
+| PPO | final-relay curriculum 6500 | 100.00% | 100.00% | 150 | -53.00 |
+| SARSA | guided09 relay 100k | 100.00% | 100.00% | 155 | -43.50 |
+
+This table is the first apples-to-apples comparison across the current algorithm families.
+The strongest route length is still PPO at 150 steps, matching the known guided shortest route.
+SARSA is slightly longer at 155 steps but has the best reward under the current reward accounting.
+DQN solves the map but remains longer at 168 steps.
+Q-learning remains capped at `2/3` under the evaluation battery profile.
+
+Generated outputs:
+
+- `outputs/logs/algorithm_comparison_complex_charge_bastion_eval_200.csv`
+- `outputs/logs/algorithm_comparison_complex_charge_bastion_eval_200.md`
+
 ---
 
 ## Next Steps
@@ -535,6 +566,6 @@ The most useful next steps from here are:
 - treat the guided PPO final-relay best-eval checkpoint as the current policy-gradient `bastion` reference
 - treat the guided SARSA seed `42` tag `guided09_relay100k` checkpoint as the current on-policy tabular `bastion` reference
 - use the SARSA ablation CSV when discussing whether guidance or reward shaping drove the hard-map improvement
-- build the Q-learning vs DQN vs PPO vs SARSA comparison table
+- extend the Q-learning vs DQN vs PPO vs SARSA comparison to more seeds or maps if needed
 - use the UI for quick visual checks of DQN, PPO, guided PPO, and saved best-eval checkpoints
 - keep generated checkpoints, plots, logs, and GIFs out of version control

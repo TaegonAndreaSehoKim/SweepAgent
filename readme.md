@@ -524,6 +524,30 @@ python scripts/evaluate_q_batch.py --maps complex_charge_labyrinth complex_charg
 
 This workflow evaluates saved checkpoints under the evaluation battery profile and writes both per-run and per-map CSV summaries under `outputs/logs/`.
 
+### Compare algorithm families
+
+Use the shared algorithm comparison script to evaluate current Q-learning, DQN, PPO, and SARSA reference checkpoints under the same map and evaluation profile:
+
+```bash
+python scripts/compare_all_algorithms.py --map-name complex_charge_bastion --eval-episodes 200
+```
+
+This writes both a machine-readable CSV and a report-ready Markdown summary under `outputs/logs/`.
+
+The current `complex_charge_bastion` reference comparison is:
+
+| algorithm | reference | cleaned ratio | success rate | average steps | average reward |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Q-learning | battery-adapt 400k seed 505 | 66.67% | 0.00% | 87 | -100.50 |
+| DQN | seed 418 relay-shape final route | 100.00% | 100.00% | 168 | -83.50 |
+| PPO | final-relay curriculum 6500 | 100.00% | 100.00% | 150 | -53.00 |
+| SARSA | guided09 relay 100k | 100.00% | 100.00% | 155 | -43.50 |
+
+Outputs:
+
+- `outputs/logs/algorithm_comparison_complex_charge_bastion_eval_200.csv`
+- `outputs/logs/algorithm_comparison_complex_charge_bastion_eval_200.md`
+
 ### Compare random vs learned agent
 
 ```bash
@@ -562,6 +586,6 @@ The current improvement areas are:
 - using the guided PPO final-relay checkpoint as the current policy-gradient `bastion` reference
 - using the guided SARSA seed `42` checkpoint as the current on-policy tabular `bastion` reference
 - using SARSA ablation results to separate plain SARSA, shaping-only, guided-only, and guided+shaping effects
-- building a comparison table across Q-learning, DQN, PPO, and SARSA under the same evaluation flow
+- extending the shared Q-learning vs DQN vs PPO vs SARSA comparison beyond the current `bastion` reference table
 - using the pygame UI for quick visual checks of DQN, PPO, guided PPO, and saved best-eval checkpoints
 - keeping generated checkpoints, plots, logs, and GIFs out of version control
