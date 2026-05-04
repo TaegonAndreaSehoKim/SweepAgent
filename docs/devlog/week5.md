@@ -521,7 +521,7 @@ The 100000-episode `complex_charge_bastion` run with seed `42` produced:
 
 This isolates the important behavior:
 
-- reward shaping alone can unlock the charger relay pattern, but with a longer route
+- reward shaping alone can unlock the charger relay pattern on some seeds, but it is not stable by itself
 - guided exploration alone does not solve `bastion`
 - guided exploration plus relay shaping remains the best SARSA recipe and reproduces the 155-step successful route
 
@@ -555,6 +555,24 @@ Generated outputs:
 
 - `outputs/logs/algorithm_comparison_complex_charge_bastion_eval_200.csv`
 - `outputs/logs/algorithm_comparison_complex_charge_bastion_eval_200.md`
+
+## 17. SARSA Additional Seed Check
+
+To check whether the SARSA ablation conclusion was seed-specific, the same 100000-episode ablation was repeated with seeds `41` and `43`.
+
+| variant | seed 41 | seed 42 | seed 43 |
+| --- | ---: | ---: | ---: |
+| `plain` | 66.67%, 0% success | 66.67%, 0% success | 66.67%, 0% success |
+| `shaping` | 66.67%, 0% success | 100%, 192 steps | 100%, 183 steps |
+| `guided` | 66.67%, 0% success | 33.33%, 0% success | 66.67%, 0% success |
+| `guided_shaping` | 100%, 156 steps | 100%, 155 steps | 100%, 155 steps |
+
+This changes the earlier read:
+
+- `plain` SARSA consistently fails to finish the map
+- `guided` alone consistently fails to finish the map
+- `shaping` alone can solve the map, but failed on seed `41`
+- `guided_shaping` solved all three checked seeds and is the stable SARSA reference
 
 ---
 

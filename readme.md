@@ -504,7 +504,16 @@ A `100000`-episode `complex_charge_bastion` ablation with seed `42` produced:
 | `guided` | 90000 | 33.33% | 0.00% | 87 |
 | `guided_shaping` | 80000 | 100.00% | 100.00% | 155 |
 
-The read is that relay reward shaping is sufficient to unlock the map for SARSA, while guided exploration alone is not. The best SARSA result remains `guided_shaping`, which reproduces the 155-step successful route.
+Additional seed checks with seeds `41` and `43` changed the interpretation:
+
+| variant | seed 41 | seed 42 | seed 43 |
+| --- | ---: | ---: | ---: |
+| `plain` | 66.67%, 0% success | 66.67%, 0% success | 66.67%, 0% success |
+| `shaping` | 66.67%, 0% success | 100%, 192 steps | 100%, 183 steps |
+| `guided` | 66.67%, 0% success | 33.33%, 0% success | 66.67%, 0% success |
+| `guided_shaping` | 100%, 156 steps | 100%, 155 steps | 100%, 155 steps |
+
+The read is now narrower: relay reward shaping can unlock the map for SARSA, but it is not stable by itself across seeds. Guided exploration alone also fails. The robust SARSA recipe is `guided_shaping`, which solved all three checked seeds and consistently reached a 155-156 step route.
 
 For a quick command check without training, add `--dry-run`. For a shorter screening pass, reduce `--episodes` and `--comparison-eval-episodes`.
 
