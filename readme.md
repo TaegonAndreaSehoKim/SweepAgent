@@ -557,6 +557,58 @@ Outputs:
 - `outputs/logs/algorithm_comparison_complex_charge_bastion_eval_200.csv`
 - `outputs/logs/algorithm_comparison_complex_charge_bastion_eval_200.md`
 
+### Cross-map seed and hypothesis checks
+
+After the `bastion` reference comparison, `complex_charge_labyrinth` and
+`complex_charge_switchback` were rerun from fresh checkpoints to check whether
+the observed performance differences were map-specific or seed-specific.
+
+The first fresh comparison used seed `604`:
+
+| map | Q-learning | DQN | PPO | SARSA |
+| --- | ---: | ---: | ---: | ---: |
+| `complex_charge_labyrinth` | 100%, 80 steps | 25%, failed | 50%, failed | 100%, 72 steps |
+| `complex_charge_switchback` | 100%, 97 steps | 100%, 84 steps | 100%, 84 steps | 100%, 84 steps |
+
+This suggested a working hypothesis:
+
+- `switchback` is a stable hard-map benchmark that all current families can solve
+- `labyrinth` exposes a harder long-horizon charger sequencing problem
+- tabular `charger_context` methods handle `labyrinth` more reliably than the current neural recipes
+
+The seed check repeated the same comparison with seeds `605`, `606`, and `607`
+under `200` evaluation episodes:
+
+| map | algorithm | seed 605 | seed 606 | seed 607 |
+| --- | --- | ---: | ---: | ---: |
+| `complex_charge_labyrinth` | Q-learning | 100%, 80 steps | 100%, 74 steps | 100%, 80 steps |
+| `complex_charge_labyrinth` | DQN | 75%, 0% success | 75%, 0% success | 50%, 0% success |
+| `complex_charge_labyrinth` | PPO | 75%, 0% success | 100%, 78 steps | 75%, 0% success |
+| `complex_charge_labyrinth` | SARSA | 100%, 72 steps | 100%, 72 steps | 100%, 72 steps |
+| `complex_charge_switchback` | Q-learning | 100%, 88 steps | 100%, 88 steps | 100%, 89 steps |
+| `complex_charge_switchback` | DQN | 100%, 84 steps | 100%, 84 steps | 100%, 86 steps |
+| `complex_charge_switchback` | PPO | 100%, 84 steps | 100%, 86 steps | 100%, 84 steps |
+| `complex_charge_switchback` | SARSA | 100%, 84 steps | 100%, 84 steps | 100%, 84 steps |
+
+The follow-up `labyrinth` adjustment experiments tested whether neural failures
+were caused by insufficient long-horizon exploration or weak full-map
+stabilization:
+
+| variant | seed 604 | seed 605 |
+| --- | ---: | ---: |
+| DQN, guided `0.9`, 8000 episodes | 25%, 0% success | 25%, 0% success |
+| DQN, slower epsilon, guided `0.8`, 8000 episodes | 100%, 76 steps | 50%, 0% success |
+| PPO, longer full stage, 9500 episodes | 50%, 0% success | 75%, 0% success |
+| PPO, stronger BC, 9500 episodes | 75%, 0% success | 75%, 0% success |
+
+The read is that `labyrinth` is not impossible for neural methods, but it is
+not yet stable. Slower DQN exploration solved one seed, while PPO curriculum and
+stronger behavior cloning improved partial completion without consistently
+producing full-map success. SARSA remains the most stable `labyrinth` reference.
+
+Generated experiment outputs are intentionally left under ignored
+`outputs/logs/` and `outputs/checkpoints/` paths.
+
 ### Compare random vs learned agent
 
 ```bash
@@ -595,6 +647,7 @@ The current improvement areas are:
 - using the guided PPO final-relay checkpoint as the current policy-gradient `bastion` reference
 - using the guided SARSA seed `42` checkpoint as the current on-policy tabular `bastion` reference
 - using SARSA ablation results to separate plain SARSA, shaping-only, guided-only, and guided+shaping effects
-- extending the shared Q-learning vs DQN vs PPO vs SARSA comparison beyond the current `bastion` reference table
+- treating `switchback` as solved across current algorithm families and using `labyrinth` as the next neural-stability target
+- using the cross-map seed checks to support the report claim that map structure, not only algorithm family, drives the observed performance gap
 - using the pygame UI for quick visual checks of DQN, PPO, guided PPO, and saved best-eval checkpoints
 - keeping generated checkpoints, plots, logs, and GIFs out of version control
