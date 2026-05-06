@@ -31,10 +31,17 @@ def test_default_bastion_checkpoint_specs_use_current_references() -> None:
         "sarsa_agent_complex_charge_bastion_best_eval_seed_42_"
         "guided09_relay100k.json"
     )
+    assert specs["guided"].checkpoint_path is None
 
 
 def test_selected_algorithms_expands_all_and_deduplicates() -> None:
-    assert selected_algorithms(["all"]) == ["q_learning", "dqn", "ppo", "sarsa"]
+    assert selected_algorithms(["all"]) == [
+        "q_learning",
+        "dqn",
+        "ppo",
+        "sarsa",
+        "guided",
+    ]
     assert selected_algorithms(["sarsa", "dqn", "sarsa"]) == ["sarsa", "dqn"]
 
 

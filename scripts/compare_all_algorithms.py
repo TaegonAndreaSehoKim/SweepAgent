@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from agents.dqn_agent import DQNAgent
+from agents.guided_agent import GuidedPolicyAgent
 from agents.ppo_agent import PPOAgent
 from agents.q_learning_agent import QLearningAgent
 from agents.sarsa_agent import SarsaAgent
@@ -26,14 +27,14 @@ from utils.experiment_utils import build_env
 class AlgorithmCheckpointSpec:
     algorithm: str
     label: str
-    checkpoint_path: Path
+    checkpoint_path: Path | None
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate Q-learning, DQN, PPO, and SARSA checkpoints under the "
-            "same SweepAgent environment settings."
+            "Evaluate Q-learning, DQN, PPO, SARSA checkpoints, and the guided "
+            "policy baseline under the same SweepAgent environment settings."
         )
     )
     parser.add_argument("--map-name", type=str, default="complex_charge_bastion")
@@ -72,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include",
         nargs="+",
-        choices=("q_learning", "dqn", "ppo", "sarsa", "all"),
+        choices=("q_learning", "dqn", "ppo", "sarsa", "guided", "all"),
         default=["all"],
         help="Algorithms to evaluate.",
     )
@@ -145,6 +146,11 @@ def default_checkpoint_specs(map_name: str) -> dict[str, AlgorithmCheckpointSpec
                     / "sarsa_agent_complex_charge_bastion_best_eval_seed_42_guided09_relay100k.json"
                 ),
             ),
+            "guided": AlgorithmCheckpointSpec(
+                algorithm="guided",
+                label="relay_guided_policy",
+                checkpoint_path=None,
+            ),
         }
 
     return {
@@ -170,12 +176,17 @@ def default_checkpoint_specs(map_name: str) -> dict[str, AlgorithmCheckpointSpec
             label="sarsa_default",
             checkpoint_path=checkpoint_dir / f"sarsa_agent_{map_name}_ep_10000_seed_42.json",
         ),
+        "guided": AlgorithmCheckpointSpec(
+            algorithm="guided",
+            label="relay_guided_policy",
+            checkpoint_path=None,
+        ),
     }
 
 
 def selected_algorithms(include_values: list[str]) -> list[str]:
     if "all" in include_values:
-        return ["q_learning", "dqn", "ppo", "sarsa"]
+        return ["q_learning", "dqn", "ppo", "sarsa", "guided"]
     return list(dict.fromkeys(include_values))
 
 
@@ -191,7 +202,7 @@ def build_checkpoint_specs(args: argparse.Namespace) -> list[AlgorithmCheckpoint
 
     for algorithm in selected_algorithms(args.include):
         default_spec = defaults[algorithm]
-        override = overrides[algorithm]
+        override = overrides.get(algorithm, "")
         if override:
             checkpoint_path = resolve_project_path(override)
             label = checkpoint_path.stem
@@ -229,20 +240,42 @@ def metadata_value(metadata: dict[str, Any], *keys: str) -> Any:
     return ""
 
 
-def load_agent(spec: AlgorithmCheckpointSpec, device: str):
+def require_checkpoint_path(spec: AlgorithmCheckpointSpec) -> Path:
+    if spec.checkpoint_path is None:
+        raise ValueError(f"{spec.algorithm} does not use a checkpoint path.")
+    return spec.checkpoint_path
+
+
+def load_agent(spec: AlgorithmCheckpointSpec, args: argparse.Namespace):
+    if spec.algorithm == "guided":
+        env = build_env(
+            map_name=args.map_name,
+            battery_profile=args.battery_profile,
+            battery_capacity_override=(
+                args.battery_capacity_override
+                if args.battery_capacity_override > 0
+                else None
+            ),
+        )
+        return GuidedPolicyAgent(
+            map_name=args.map_name,
+            battery_capacity=int(env.battery_capacity or 1),
+        )
+
+    checkpoint_path = require_checkpoint_path(spec)
     if spec.algorithm == "q_learning":
-        return QLearningAgent.load(spec.checkpoint_path)
+        return QLearningAgent.load(checkpoint_path)
     if spec.algorithm == "dqn":
-        return DQNAgent.load(spec.checkpoint_path, device=device, training=False)
+        return DQNAgent.load(checkpoint_path, device=args.device, training=False)
     if spec.algorithm == "ppo":
-        return PPOAgent.load(spec.checkpoint_path, device=device, training=False)
+        return PPOAgent.load(checkpoint_path, device=args.device, training=False)
     if spec.algorithm == "sarsa":
-        return SarsaAgent.load(spec.checkpoint_path)
+        return SarsaAgent.load(checkpoint_path)
     raise ValueError(f"Unsupported algorithm: {spec.algorithm}")
 
 
 def read_metadata(spec: AlgorithmCheckpointSpec) -> dict[str, Any]:
-    if not spec.checkpoint_path.exists():
+    if spec.checkpoint_path is None or not spec.checkpoint_path.exists():
         return {}
     if spec.algorithm in {"q_learning", "sarsa"}:
         return read_json_checkpoint_metadata(spec.checkpoint_path)
@@ -343,7 +376,7 @@ def missing_checkpoint_row(
         "map_name": args.map_name,
         "battery_profile": args.battery_profile,
         "eval_episodes": args.eval_episodes,
-        "checkpoint_path": str(spec.checkpoint_path),
+        "checkpoint_path": "" if spec.checkpoint_path is None else str(spec.checkpoint_path),
         "checkpoint_episodes": "",
         "checkpoint_tag": "",
         "source_seed": "",
@@ -372,7 +405,7 @@ def evaluated_checkpoint_row(
         "map_name": args.map_name,
         "battery_profile": args.battery_profile,
         "eval_episodes": args.eval_episodes,
-        "checkpoint_path": str(spec.checkpoint_path),
+        "checkpoint_path": "" if spec.checkpoint_path is None else str(spec.checkpoint_path),
         "checkpoint_episodes": metadata_value(
             metadata,
             "best_checkpoint_episodes",
@@ -398,13 +431,13 @@ def evaluate_checkpoint(
     args: argparse.Namespace,
     spec: AlgorithmCheckpointSpec,
 ) -> dict[str, str | int | float]:
-    if not spec.checkpoint_path.exists():
+    if spec.checkpoint_path is not None and not spec.checkpoint_path.exists():
         if args.strict_missing:
             raise FileNotFoundError(f"Missing checkpoint: {spec.checkpoint_path}")
         return missing_checkpoint_row(args, spec)
 
     metadata = read_metadata(spec)
-    agent = load_agent(spec, device=args.device)
+    agent = load_agent(spec, args=args)
     eval_result = evaluate_policy(
         map_name=args.map_name,
         eval_episodes=args.eval_episodes,
@@ -473,6 +506,7 @@ def display_algorithm_name(algorithm: str) -> str:
         "dqn": "DQN",
         "ppo": "PPO",
         "sarsa": "SARSA",
+        "guided": "Guided",
     }
     return display_names.get(algorithm, algorithm)
 
