@@ -44,6 +44,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def build_env(
     map_name: str = "default",
     battery_profile: Literal["training", "evaluation"] = "evaluation",
+    reward_profile: Literal["shaped", "simple"] = "shaped",
     battery_capacity_override: int | None = None,
     initial_cleaned_positions: list[tuple[int, int]] | None = None,
     reward_move_toward_relay_charger: float | None = None,
@@ -59,12 +60,25 @@ def build_env(
         raise ValueError(
             "battery_profile must be either 'training' or 'evaluation'."
         )
+    if reward_profile not in {"shaped", "simple"}:
+        raise ValueError("reward_profile must be either 'shaped' or 'simple'.")
 
     preset = MAP_PRESETS[map_name]
     battery_capacity_key = f"battery_capacity_{battery_profile}"
     battery_capacity = preset.get(battery_capacity_key, preset.get("battery_capacity"))
     if battery_capacity_override is not None:
         battery_capacity = battery_capacity_override
+    use_simple_rewards = reward_profile == "simple"
+    relay_progress_reward = (
+        REWARD_MOVE_TOWARD_RELAY_CHARGER
+        if reward_move_toward_relay_charger is None
+        else reward_move_toward_relay_charger
+    )
+    relay_regress_penalty = (
+        PENALTY_MOVE_AWAY_FROM_RELAY_CHARGER
+        if penalty_move_away_from_relay_charger is None
+        else penalty_move_away_from_relay_charger
+    )
 
     return GridCleanEnv(
         grid_map=preset["grid_map"],
@@ -77,28 +91,42 @@ def build_env(
         reward_finish=REWARD_FINISH,
         battery_capacity=battery_capacity,
         low_battery_ratio=LOW_BATTERY_RATIO,
-        reward_move_toward_charger=REWARD_MOVE_TOWARD_CHARGER,
-        penalty_move_away_from_charger=PENALTY_MOVE_AWAY_FROM_CHARGER,
-        reward_move_toward_safe_dirty=REWARD_MOVE_TOWARD_SAFE_DIRTY,
-        penalty_move_away_from_safe_dirty=PENALTY_MOVE_AWAY_FROM_SAFE_DIRTY,
+        reward_move_toward_charger=(
+            0.0 if use_simple_rewards else REWARD_MOVE_TOWARD_CHARGER
+        ),
+        penalty_move_away_from_charger=(
+            0.0 if use_simple_rewards else PENALTY_MOVE_AWAY_FROM_CHARGER
+        ),
+        reward_move_toward_safe_dirty=(
+            0.0 if use_simple_rewards else REWARD_MOVE_TOWARD_SAFE_DIRTY
+        ),
+        penalty_move_away_from_safe_dirty=(
+            0.0 if use_simple_rewards else PENALTY_MOVE_AWAY_FROM_SAFE_DIRTY
+        ),
         reward_move_toward_relay_charger=(
-            REWARD_MOVE_TOWARD_RELAY_CHARGER
-            if reward_move_toward_relay_charger is None
-            else reward_move_toward_relay_charger
+            0.0 if use_simple_rewards else relay_progress_reward
         ),
         penalty_move_away_from_relay_charger=(
-            PENALTY_MOVE_AWAY_FROM_RELAY_CHARGER
-            if penalty_move_away_from_relay_charger is None
-            else penalty_move_away_from_relay_charger
+            0.0 if use_simple_rewards else relay_regress_penalty
         ),
         battery_safety_reserve_min=BATTERY_SAFETY_RESERVE_MIN,
         battery_safety_reserve_ratio=BATTERY_SAFETY_RESERVE_RATIO,
-        low_battery_recharge_reward=LOW_BATTERY_RECHARGE_REWARD,
-        penalty_recharge_without_progress=PENALTY_RECHARGE_WITHOUT_PROGRESS,
-        reward_final_dirty_bonus=REWARD_FINAL_DIRTY_BONUS,
+        low_battery_recharge_reward=(
+            0.0 if use_simple_rewards else LOW_BATTERY_RECHARGE_REWARD
+        ),
+        penalty_recharge_without_progress=(
+            0.0 if use_simple_rewards else PENALTY_RECHARGE_WITHOUT_PROGRESS
+        ),
+        reward_final_dirty_bonus=(
+            0.0 if use_simple_rewards else REWARD_FINAL_DIRTY_BONUS
+        ),
         penalty_battery_depleted=PENALTY_BATTERY_DEPLETED,
-        penalty_enter_unrecoverable_state=PENALTY_ENTER_UNRECOVERABLE_STATE,
-        successful_recharge_completion_bonus=SUCCESSFUL_RECHARGE_COMPLETION_BONUS,
+        penalty_enter_unrecoverable_state=(
+            0.0 if use_simple_rewards else PENALTY_ENTER_UNRECOVERABLE_STATE
+        ),
+        successful_recharge_completion_bonus=(
+            0.0 if use_simple_rewards else SUCCESSFUL_RECHARGE_COMPLETION_BONUS
+        ),
     )
 
 

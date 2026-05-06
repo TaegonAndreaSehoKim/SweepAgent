@@ -255,6 +255,18 @@ class GridCleanEnv:
             return -1
         return self.dirty_distance_maps[dirty_pos][row][col]
 
+    def _distance_to_nearest_dirty(self, row: int, col: int) -> int:
+        best_distance = -1
+        for dirty_pos in self.dirty_positions:
+            if not self._is_dirty(*dirty_pos):
+                continue
+            distance = self._distance_to_dirty(row, col, dirty_pos)
+            if distance < 0:
+                continue
+            if best_distance == -1 or distance < best_distance:
+                best_distance = distance
+        return best_distance
+
     def _should_consider_charger(self) -> bool:
         return (
             self.battery_remaining is not None
@@ -321,6 +333,65 @@ class GridCleanEnv:
 
         self.safe_dirty_distance_cache[cache_key] = best_distance
         return best_distance
+
+    def _reachable_safe_dirty_count(
+        self,
+        row: int,
+        col: int,
+        battery_remaining: int | None,
+    ) -> int:
+        if battery_remaining is None:
+            return sum(
+                1
+                for dirty_pos in self.dirty_positions
+                if self._is_dirty(*dirty_pos)
+                and self._distance_to_dirty(row, col, dirty_pos) >= 0
+            )
+
+        reachable_count = 0
+        for dirty_pos in self.dirty_positions:
+            if not self._is_dirty(*dirty_pos):
+                continue
+
+            distance_to_dirty = self._distance_to_dirty(row, col, dirty_pos)
+            if not self._should_consider_charger():
+                if 0 <= distance_to_dirty <= battery_remaining:
+                    reachable_count += 1
+                continue
+
+            charger_distance_from_dirty = self._distance_to_nearest_charger(*dirty_pos)
+            route_cost = self._dirty_route_cost(
+                distance_to_dirty,
+                charger_distance_from_dirty,
+            )
+            if 0 <= route_cost <= battery_remaining:
+                reachable_count += 1
+
+        return reachable_count
+
+    def _reachable_dirty_after_recharge_count(self) -> int:
+        if self.battery_capacity is None or not self.charger_positions:
+            row, col = self.robot_pos
+            return self._reachable_safe_dirty_count(row, col, self.battery_remaining)
+
+        reachable_count = 0
+        for dirty_pos in self.dirty_positions:
+            if not self._is_dirty(*dirty_pos):
+                continue
+
+            for charger_pos in self.charger_positions:
+                charger_to_dirty = self._distance_to_dirty(
+                    charger_pos[0],
+                    charger_pos[1],
+                    dirty_pos,
+                )
+                dirty_to_charger = self._distance_to_nearest_charger(*dirty_pos)
+                route_cost = self._dirty_route_cost(charger_to_dirty, dirty_to_charger)
+                if 0 <= route_cost <= self.battery_capacity:
+                    reachable_count += 1
+                    break
+
+        return reachable_count
 
     def _best_relay_charger_position(
         self,
@@ -710,6 +781,67 @@ class GridCleanEnv:
             recharged=False,
             termination_reason=termination_reason,
         )
+
+    def get_feasibility_features(self) -> Dict[str, float | int]:
+        row, col = self.robot_pos
+        battery_remaining = self.battery_remaining
+        nearest_charger_distance = (
+            self._distance_to_nearest_charger(row, col)
+            if self.charger_positions
+            else -1
+        )
+        nearest_dirty_distance = self._distance_to_nearest_dirty(row, col)
+        nearest_safe_dirty_distance = (
+            self._distance_to_nearest_safe_dirty(row, col, battery_remaining)
+            if self._should_consider_charger()
+            else nearest_dirty_distance
+        )
+        relay_charger_position = (
+            self._best_relay_charger_position(row, col, battery_remaining)
+            if self._should_consider_charger()
+            else None
+        )
+        relay_charger_distance = (
+            self._distance_to_charger(row, col, relay_charger_position)
+            if relay_charger_position is not None
+            else -1
+        )
+        reachable_safe_dirty_count = self._reachable_safe_dirty_count(
+            row,
+            col,
+            battery_remaining,
+        )
+        reachable_after_recharge_count = self._reachable_dirty_after_recharge_count()
+        can_reach_charger = (
+            battery_remaining is not None
+            and nearest_charger_distance >= 0
+            and nearest_charger_distance <= battery_remaining
+        )
+
+        return {
+            "remaining_dirty_count": (
+                self.total_dirty_tiles - self._count_cleaned_tiles()
+            ),
+            "cleaned_count": self._count_cleaned_tiles(),
+            "battery_remaining": (
+                battery_remaining if battery_remaining is not None else -1
+            ),
+            "battery_capacity": (
+                self.battery_capacity if self.battery_capacity is not None else -1
+            ),
+            "battery_safety_reserve": self._battery_safety_reserve(),
+            "nearest_dirty_distance": nearest_dirty_distance,
+            "nearest_safe_dirty_distance": nearest_safe_dirty_distance,
+            "nearest_charger_distance": nearest_charger_distance,
+            "relay_charger_distance": relay_charger_distance,
+            "reachable_safe_dirty_count": reachable_safe_dirty_count,
+            "reachable_dirty_after_recharge_count": reachable_after_recharge_count,
+            "can_reach_charger": 1 if can_reach_charger else 0,
+            "can_clean_without_recharge": 1 if reachable_safe_dirty_count > 0 else 0,
+            "can_progress_after_recharge": (
+                1 if reachable_after_recharge_count > 0 else 0
+            ),
+        }
 
     def render(self) -> None:
         display_grid = [row[:] for row in self.grid]
