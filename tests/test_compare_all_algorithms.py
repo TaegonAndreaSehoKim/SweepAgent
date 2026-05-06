@@ -68,6 +68,7 @@ def test_evaluated_checkpoint_row_includes_metadata_and_metrics(tmp_path) -> Non
     args = Namespace(
         map_name="complex_charge_bastion",
         battery_profile="evaluation",
+        reward_profile="shaped",
         eval_episodes=200,
     )
     spec = AlgorithmCheckpointSpec(
@@ -84,8 +85,13 @@ def test_evaluated_checkpoint_row_includes_metadata_and_metrics(tmp_path) -> Non
         "avg_reward": -43.5,
         "avg_steps": 155.0,
         "avg_cleaned_ratio": 1.0,
+        "min_cleaned_ratio": 1.0,
+        "max_cleaned_ratio": 1.0,
+        "std_cleaned_ratio": 0.0,
         "success_rate": 1.0,
+        "success_count": 200,
         "avg_recharges": 4.0,
+        "avg_final_battery_remaining": 15.0,
         "termination_all_cleaned": 200,
         "termination_battery_depleted": 0,
         "termination_step_limit": 0,
@@ -98,7 +104,11 @@ def test_evaluated_checkpoint_row_includes_metadata_and_metrics(tmp_path) -> Non
     assert row["checkpoint_episodes"] == 80000
     assert row["checkpoint_tag"] == "guided09_relay100k"
     assert row["source_seed"] == 42
+    assert row["reward_profile"] == "shaped"
     assert row["avg_steps"] == 155.0
+    assert row["success_count"] == 200
+    assert row["min_cleaned_ratio"] == 1.0
+    assert row["std_cleaned_ratio"] == 0.0
     assert row["success_rate"] == 1.0
 
 
@@ -106,6 +116,7 @@ def test_missing_checkpoint_row_marks_status(tmp_path) -> None:
     args = Namespace(
         map_name="complex_charge_bastion",
         battery_profile="evaluation",
+        reward_profile="shaped",
         eval_episodes=200,
     )
     spec = AlgorithmCheckpointSpec(
@@ -127,8 +138,13 @@ def test_generate_markdown_report_summarizes_rankings(tmp_path) -> None:
             "algorithm": "q_learning",
             "label": "q_reference",
             "status": "evaluated",
+            "reward_profile": "shaped",
             "avg_cleaned_ratio": 0.666667,
+            "min_cleaned_ratio": 0.333333,
+            "max_cleaned_ratio": 0.666667,
+            "std_cleaned_ratio": 0.157135,
             "success_rate": 0.0,
+            "success_count": 0,
             "avg_steps": 87.0,
             "avg_reward": -100.5,
             "avg_recharges": 2.0,
@@ -137,8 +153,13 @@ def test_generate_markdown_report_summarizes_rankings(tmp_path) -> None:
             "algorithm": "ppo",
             "label": "ppo_reference",
             "status": "evaluated",
+            "reward_profile": "shaped",
             "avg_cleaned_ratio": 1.0,
+            "min_cleaned_ratio": 1.0,
+            "max_cleaned_ratio": 1.0,
+            "std_cleaned_ratio": 0.0,
             "success_rate": 1.0,
+            "success_count": 200,
             "avg_steps": 150.0,
             "avg_reward": -53.0,
             "avg_recharges": 3.0,
@@ -147,8 +168,13 @@ def test_generate_markdown_report_summarizes_rankings(tmp_path) -> None:
             "algorithm": "sarsa",
             "label": "sarsa_reference",
             "status": "evaluated",
+            "reward_profile": "shaped",
             "avg_cleaned_ratio": 1.0,
+            "min_cleaned_ratio": 1.0,
+            "max_cleaned_ratio": 1.0,
+            "std_cleaned_ratio": 0.0,
             "success_rate": 1.0,
+            "success_count": 200,
             "avg_steps": 155.0,
             "avg_reward": -43.5,
             "avg_recharges": 3.0,
@@ -164,7 +190,9 @@ def test_generate_markdown_report_summarizes_rankings(tmp_path) -> None:
     )
 
     assert "| PPO | `ppo_reference` | 100.00% | 100.00% | 150.00 | -53.00 | 3.00 |" in report
+    assert "- reward profile: `shaped`" in report
     assert "- Solved references: PPO, SARSA." in report
     assert "- Fastest successful route: PPO at 150.00 steps." in report
     assert "- Best average reward: SARSA at -43.50." in report
+    assert "- Most stable coverage: PPO with min/max cleaned 100.00%/100.00% and std 0.00." in report
     assert "Q-learning (66.67% cleaned, 0.00% success)" in report

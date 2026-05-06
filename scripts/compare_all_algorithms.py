@@ -6,7 +6,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from statistics import mean
+from statistics import mean, pstdev
 from typing import Any, Callable
 
 import torch
@@ -44,6 +44,13 @@ def parse_args() -> argparse.Namespace:
         type=str,
         choices=("training", "evaluation"),
         default="evaluation",
+    )
+    parser.add_argument(
+        "--reward-profile",
+        type=str,
+        choices=("shaped", "simple"),
+        default="shaped",
+        help="Reward profile used during evaluation.",
     )
     parser.add_argument("--battery-capacity-override", type=int, default=0)
     parser.add_argument(
@@ -251,6 +258,7 @@ def load_agent(spec: AlgorithmCheckpointSpec, args: argparse.Namespace):
         env = build_env(
             map_name=args.map_name,
             battery_profile=args.battery_profile,
+            reward_profile=args.reward_profile,
             battery_capacity_override=(
                 args.battery_capacity_override
                 if args.battery_capacity_override > 0
@@ -293,6 +301,7 @@ def evaluate_policy(
     eval_episodes: int,
     action_fn: Callable[[tuple[int, int, int, int]], int],
     battery_profile: str = "evaluation",
+    reward_profile: str = "shaped",
     battery_capacity_override: int | None = None,
 ) -> dict[str, float | int]:
     if eval_episodes <= 0:
@@ -300,8 +309,13 @@ def evaluate_policy(
             "avg_reward": 0.0,
             "avg_steps": 0.0,
             "avg_cleaned_ratio": 0.0,
+            "min_cleaned_ratio": 0.0,
+            "max_cleaned_ratio": 0.0,
+            "std_cleaned_ratio": 0.0,
             "success_rate": 0.0,
+            "success_count": 0,
             "avg_recharges": 0.0,
+            "avg_final_battery_remaining": 0.0,
             "termination_all_cleaned": 0,
             "termination_battery_depleted": 0,
             "termination_step_limit": 0,
@@ -311,6 +325,7 @@ def evaluate_policy(
     env = build_env(
         map_name=map_name,
         battery_profile=battery_profile,  # type: ignore[arg-type]
+        reward_profile=reward_profile,  # type: ignore[arg-type]
         battery_capacity_override=battery_capacity_override,
     )
     rewards: list[float] = []
@@ -318,6 +333,7 @@ def evaluate_policy(
     cleaned_ratios: list[float] = []
     successes: list[float] = []
     recharges: list[float] = []
+    final_battery_values: list[float] = []
     terminations = {
         "all_cleaned": 0,
         "battery_depleted": 0,
@@ -345,6 +361,7 @@ def evaluate_policy(
         cleaned_ratios.append(cleaned_ratio)
         successes.append(1.0 if cleaned_ratio == 1.0 else 0.0)
         recharges.append(float(recharge_count))
+        final_battery_values.append(float(final_info["battery_remaining"]))
 
         termination_reason = str(final_info["termination_reason"])
         if termination_reason in terminations:
@@ -356,8 +373,13 @@ def evaluate_policy(
         "avg_reward": mean(rewards),
         "avg_steps": mean(steps),
         "avg_cleaned_ratio": mean(cleaned_ratios),
+        "min_cleaned_ratio": min(cleaned_ratios),
+        "max_cleaned_ratio": max(cleaned_ratios),
+        "std_cleaned_ratio": pstdev(cleaned_ratios),
         "success_rate": mean(successes),
+        "success_count": int(sum(successes)),
         "avg_recharges": mean(recharges),
+        "avg_final_battery_remaining": mean(final_battery_values),
         "termination_all_cleaned": terminations["all_cleaned"],
         "termination_battery_depleted": terminations["battery_depleted"],
         "termination_step_limit": terminations["step_limit"],
@@ -375,6 +397,7 @@ def missing_checkpoint_row(
         "status": "missing_checkpoint",
         "map_name": args.map_name,
         "battery_profile": args.battery_profile,
+        "reward_profile": args.reward_profile,
         "eval_episodes": args.eval_episodes,
         "checkpoint_path": "" if spec.checkpoint_path is None else str(spec.checkpoint_path),
         "checkpoint_episodes": "",
@@ -383,8 +406,13 @@ def missing_checkpoint_row(
         "avg_reward": 0.0,
         "avg_steps": 0.0,
         "avg_cleaned_ratio": 0.0,
+        "min_cleaned_ratio": 0.0,
+        "max_cleaned_ratio": 0.0,
+        "std_cleaned_ratio": 0.0,
         "success_rate": 0.0,
+        "success_count": 0,
         "avg_recharges": 0.0,
+        "avg_final_battery_remaining": 0.0,
         "termination_all_cleaned": 0,
         "termination_battery_depleted": 0,
         "termination_step_limit": 0,
@@ -404,6 +432,7 @@ def evaluated_checkpoint_row(
         "status": "evaluated",
         "map_name": args.map_name,
         "battery_profile": args.battery_profile,
+        "reward_profile": args.reward_profile,
         "eval_episodes": args.eval_episodes,
         "checkpoint_path": "" if spec.checkpoint_path is None else str(spec.checkpoint_path),
         "checkpoint_episodes": metadata_value(
@@ -418,8 +447,16 @@ def evaluated_checkpoint_row(
         "avg_reward": round(float(eval_result["avg_reward"]), 4),
         "avg_steps": round(float(eval_result["avg_steps"]), 4),
         "avg_cleaned_ratio": round(float(eval_result["avg_cleaned_ratio"]), 6),
+        "min_cleaned_ratio": round(float(eval_result["min_cleaned_ratio"]), 6),
+        "max_cleaned_ratio": round(float(eval_result["max_cleaned_ratio"]), 6),
+        "std_cleaned_ratio": round(float(eval_result["std_cleaned_ratio"]), 6),
         "success_rate": round(float(eval_result["success_rate"]), 6),
+        "success_count": int(eval_result["success_count"]),
         "avg_recharges": round(float(eval_result["avg_recharges"]), 4),
+        "avg_final_battery_remaining": round(
+            float(eval_result["avg_final_battery_remaining"]),
+            4,
+        ),
         "termination_all_cleaned": int(eval_result["termination_all_cleaned"]),
         "termination_battery_depleted": int(eval_result["termination_battery_depleted"]),
         "termination_step_limit": int(eval_result["termination_step_limit"]),
@@ -443,6 +480,7 @@ def evaluate_checkpoint(
         eval_episodes=args.eval_episodes,
         action_fn=policy_action_fn(spec, agent),
         battery_profile=args.battery_profile,
+        reward_profile=args.reward_profile,
         battery_capacity_override=(
             args.battery_capacity_override
             if args.battery_capacity_override > 0
@@ -478,6 +516,7 @@ def save_csv(output_path: Path, rows: list[dict[str, str | int | float]]) -> Pat
         "status",
         "map_name",
         "battery_profile",
+        "reward_profile",
         "eval_episodes",
         "checkpoint_path",
         "checkpoint_episodes",
@@ -486,8 +525,13 @@ def save_csv(output_path: Path, rows: list[dict[str, str | int | float]]) -> Pat
         "avg_reward",
         "avg_steps",
         "avg_cleaned_ratio",
+        "min_cleaned_ratio",
+        "max_cleaned_ratio",
+        "std_cleaned_ratio",
         "success_rate",
+        "success_count",
         "avg_recharges",
+        "avg_final_battery_remaining",
         "termination_all_cleaned",
         "termination_battery_depleted",
         "termination_step_limit",
@@ -531,6 +575,13 @@ def generate_markdown_report(
     csv_path: Path,
 ) -> str:
     evaluated_rows = [row for row in rows if row["status"] == "evaluated"]
+    reward_profiles = sorted(
+        {
+            str(row.get("reward_profile", ""))
+            for row in rows
+            if row.get("reward_profile", "")
+        }
+    )
     solved_rows = [
         row for row in evaluated_rows if row_float(row, "success_rate") == 1.0
     ]
@@ -542,6 +593,7 @@ def generate_markdown_report(
         f"# Algorithm Comparison: {map_name}",
         "",
         f"- evaluation profile: `{battery_profile}`",
+        f"- reward profile: `{', '.join(reward_profiles) or 'unspecified'}`",
         f"- evaluation episodes: `{eval_episodes}`",
         f"- source CSV: `{csv_path}`",
         "",
@@ -592,6 +644,22 @@ def generate_markdown_report(
             f"{display_algorithm_name(str(best_reward['algorithm']))} "
             f"at {format_metric(row_float(best_reward, 'avg_reward'))}."
         )
+        most_stable = max(
+            evaluated_rows,
+            key=lambda row: (
+                row_float(row, "success_rate"),
+                row_float(row, "min_cleaned_ratio"),
+                -row_float(row, "std_cleaned_ratio"),
+            ),
+        )
+        lines.append(
+            "- Most stable coverage: "
+            f"{display_algorithm_name(str(most_stable['algorithm']))} "
+            f"with min/max cleaned "
+            f"{format_percent(row_float(most_stable, 'min_cleaned_ratio'))}/"
+            f"{format_percent(row_float(most_stable, 'max_cleaned_ratio'))} "
+            f"and std {format_metric(row_float(most_stable, 'std_cleaned_ratio'))}."
+        )
 
     if partial_rows:
         partial_summary = ", ".join(
@@ -639,7 +707,10 @@ def print_summary_row(row: dict[str, str | int | float]) -> None:
         f"avg_reward={float(row['avg_reward']):.2f} | "
         f"avg_steps={float(row['avg_steps']):.2f} | "
         f"avg_cleaned_ratio={float(row['avg_cleaned_ratio']) * 100:.2f}% | "
-        f"success_rate={float(row['success_rate']) * 100:.2f}%"
+        f"success_rate={float(row['success_rate']) * 100:.2f}% | "
+        f"cleaned_range="
+        f"{float(row['min_cleaned_ratio']) * 100:.2f}-"
+        f"{float(row['max_cleaned_ratio']) * 100:.2f}%"
     )
 
 
@@ -658,7 +729,8 @@ def main() -> None:
     rows: list[dict[str, str | int | float]] = []
 
     for spec in build_checkpoint_specs(args):
-        print(f"Evaluating {spec.algorithm}: {spec.checkpoint_path}")
+        source = spec.checkpoint_path if spec.checkpoint_path is not None else spec.label
+        print(f"Evaluating {spec.algorithm}: {source}")
         row = evaluate_checkpoint(args, spec)
         rows.append(row)
         print_summary_row(row)
