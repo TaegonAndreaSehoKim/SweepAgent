@@ -4,6 +4,16 @@ SweepAgent is a grid-based reinforcement learning project for a cleaning robot w
 
 The main conclusion from the final experiments is that the hardest maps are feasible, but primitive grid-action reinforcement learning has a poor representation for them. Planner, waypoint, and graph-state baselines show that the real decision problem is much smaller than the raw step-by-step environment suggests.
 
+## Highlights
+
+- **Problem focus:** long-horizon cleaning routes with battery limits, chargers, walls, and sparse completion feedback.
+- **Hard benchmark:** `complex_charge_bastion`, where many primitive-action policies plateau at partial completion.
+- **Implemented agents:** Q-learning, SARSA, DQN, PPO, random, and guided-policy baselines.
+- **Structural baselines:** deterministic planner, waypoint controller, and special-node graph environment.
+- **Main finding:** reward shaping helps, but representation and exploration structure matter more for the hardest maps.
+- **Best current direction:** hierarchical or graph-level RL over dirty tiles and chargers, with primitive path execution handled by shortest-path control.
+- **Reports:** final experiment writeups are available in [docs/report_draft.md](docs/report_draft.md) and [docs/improvement_experiment_report.md](docs/improvement_experiment_report.md).
+
 ## Project Status
 
 The project is in a report-ready state. It includes:
